@@ -24,9 +24,9 @@ reviews:
     - path: "src/lib/types.ts"
       instructions: "领域模型的唯一来源；字段或语义改动需与 CONTEXT.md 术语保持一致。"
 
+  # 默认不自动审（试用约 3 次/小时）；要审时在 PR 评论 @coderabbitai review
   auto_review:
-    base_branches:
-      - "dev"
+    enabled: false
 
   tools:
     shellcheck:

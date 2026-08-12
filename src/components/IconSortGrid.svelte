@@ -53,7 +53,6 @@
   const MERGE_DWELL_MS = 400;
   const INSERT_DWELL_MS = 220;
   const OUTSIDE_DWELL_MS = 320;
-  const CENTER = 0.38;
   const PAGE_EDGE_PX = 44;
   const PAGE_FLIP_DWELL_MS = 400;
   const PAGE_FLIP_COOLDOWN_MS = 650;
@@ -161,10 +160,8 @@
   function isCenterHit(targetId: string, clientX: number, clientY: number): boolean {
     const el = document.querySelector<HTMLElement>(`[data-tile-id="${CSS.escape(targetId)}"]`);
     if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const nx = (clientX - rect.left) / Math.max(rect.width, 1);
-    const ny = (clientY - rect.top) / Math.max(rect.height, 1);
-    return nx > CENTER && nx < 1 - CENTER && ny > CENTER && ny < 1 - CENTER;
+    const { nx, ny } = normalizedInRect(clientX, clientY, el.getBoundingClientRect());
+    return hitEdgeRelative(nx, ny) === 'center';
   }
 
   function insertBeforeIndex(sourceId: string, insertAt: number): boolean {

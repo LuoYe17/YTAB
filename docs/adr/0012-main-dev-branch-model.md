@@ -10,4 +10,4 @@
 
 ## Consequences
 
-Agent 与人类默认在 `dev` 工作；`main` 只接受来自 `dev` 的 PR。`prototypes/` 与 `.scratch/` 保持本地。细则见 `docs/agents/github-flow.md`。
+Agent 与人类默认在 `dev` 工作；`main` 只接受来自 `dev` 的 PR。PR 由维护者手动 squash 合入，Agent 默认只开 PR 不合入。`prototypes/` 与 `.scratch/` 保持本地。细则见 `docs/agents/github-flow.md`。

@@ -9,7 +9,23 @@
   import SettingsModal from '../../components/SettingsModal.svelte';
   import FolderOverlay from '../../components/FolderOverlay.svelte';
   import WallpaperStage from '../../components/WallpaperStage.svelte';
-  import { newId } from '../../lib/defaults';
+  import {
+    addApp as gridAddApp,
+    beginDragSession,
+    cancelDragSession,
+    currentPageItems as gridCurrentPageItems,
+    dropIntoFolder as gridDropIntoFolder,
+    ejectFromFolderAt as gridEjectFromFolderAt,
+    mergeApps as gridMergeApps,
+    openFolderItem as gridOpenFolderItem,
+    pageFlipDuringDrag as gridPageFlipDuringDrag,
+    paginate,
+    renameFolder as gridRenameFolder,
+    reorderFolderChildren as gridReorderFolderChildren,
+    reorderPage as gridReorderPage,
+    type AppGridDragSnapshot,
+    type AppGridView,
+  } from '../../lib/appGrid';
   import { fetchHitokoto } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
   import {
@@ -30,8 +46,6 @@
     type WallpaperItem,
   } from '../../lib/wallpaper';
 
-  const PAGE_CAPACITY = 19;
-
   let ready = $state(false);
   let ytab = $state(createEmptyState());
   let pageIndex = $state(0);
@@ -39,7 +53,7 @@
   let addOpen = $state(false);
   let openFolder = $state<FolderItem | null>(null);
   /** Esc / 取消跨页拖时整表回滚 */
-  let dragPagesSnapshot: { pages: GridItem[][]; pageIndex: number } | null = null;
+  let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
   /** What WallpaperStage paints (may briefly be a preview before final). */
   let displayUrl = $state('');
   let wallpaperBusy = $state(false);
@@ -147,6 +161,26 @@
     return new Promise<void>((r) => setTimeout(r, ms));
   }
 
+  function gridView(): AppGridView {
+    return {
+      pages: ytab.pages,
+      pageIndex,
+      openFolder,
+      dragSnapshot: dragPagesSnapshot,
+    };
+  }
+
+  function applyGridView(next: AppGridView) {
+    pageIndex = next.pageIndex;
+    openFolder = next.openFolder;
+    dragPagesSnapshot = next.dragSnapshot;
+  }
+
+  async function applyGrid(next: AppGridView) {
+    applyGridView(next);
+    await persist((prev) => ({ ...prev, pages: next.pages }));
+  }
+
   async function onFirstRun(result: {
     mode: 'author' | 'empty';
     apps: AppItem[];
@@ -176,25 +210,8 @@
     schedulePoolFill(ytab.settings);
   }
 
-  function paginate(items: GridItem[]): GridItem[][] {
-    if (items.length === 0) return [[]];
-    const pages: GridItem[][] = [];
-    for (let i = 0; i < items.length; i += PAGE_CAPACITY) {
-      pages.push(items.slice(i, i + PAGE_CAPACITY));
-    }
-    return pages.length ? pages : [[]];
-  }
-
-  function flattenPages(pages: GridItem[][]): GridItem[] {
-    return pages.flat();
-  }
-
-  function rewritePages(items: GridItem[]): GridItem[][] {
-    return paginate(items);
-  }
-
   function currentPageItems(): GridItem[] {
-    return ytab.pages[pageIndex] ?? [];
+    return gridCurrentPageItems(gridView());
   }
 
   function openApp(app: AppItem) {
@@ -206,92 +223,29 @@
   }
 
   async function addApp(app: AppItem) {
-    await persist((prev) => {
-      const all = flattenPages(prev.pages);
-      all.push(app);
-      pageIndex = Math.max(0, Math.ceil(all.length / PAGE_CAPACITY) - 1);
-      return { ...prev, pages: rewritePages(all) };
-    });
+    await applyGrid(gridAddApp(gridView(), app));
     addOpen = false;
   }
 
   async function mergeApps(fromId: string, ontoId: string) {
-    dragPagesSnapshot = null;
-    await persist((prev) => {
-      const all = flattenPages(prev.pages);
-      const fromIdx = all.findIndex((i) => i.id === fromId);
-      const ontoIdx = all.findIndex((i) => i.id === ontoId);
-      if (fromIdx < 0 || ontoIdx < 0) return prev;
-      const fromItem = all[fromIdx];
-      const ontoItem = all[ontoIdx];
-      if (!fromItem || !ontoItem) return prev;
-      if (fromItem.kind !== 'app' || ontoItem.kind !== 'app') return prev;
-
-      const folder: FolderItem = {
-        id: newId(),
-        kind: 'folder',
-        name: '文件夹',
-        children: [ontoItem, fromItem],
-      };
-      const next = all.filter((i) => i.id !== fromId && i.id !== ontoId);
-      next.splice(Math.min(fromIdx, ontoIdx), 0, folder);
-      return { ...prev, pages: rewritePages(next) };
-    });
+    await applyGrid(gridMergeApps(gridView(), fromId, ontoId));
   }
 
   async function dropIntoFolder(appId: string, folderId: string) {
-    dragPagesSnapshot = null;
-    await persist((prev) => {
-      const all = flattenPages(prev.pages);
-      const appIdx = all.findIndex((i) => i.id === appId);
-      const folderIdx = all.findIndex((i) => i.id === folderId);
-      if (appIdx < 0 || folderIdx < 0) return prev;
-      const app = all[appIdx];
-      const folder = all[folderIdx];
-      if (!app || app.kind !== 'app' || !folder || folder.kind !== 'folder') return prev;
-
-      const next = all
-        .filter((i) => i.id !== appId)
-        .map((i) =>
-          i.id === folderId && i.kind === 'folder'
-            ? { ...i, children: [...i.children, app] }
-            : i,
-        );
-      return { ...prev, pages: rewritePages(next) };
-    });
+    await applyGrid(gridDropIntoFolder(gridView(), appId, folderId));
   }
 
   async function reorderPage(pageItems: GridItem[]) {
-    dragPagesSnapshot = null;
-    await persist((prev) => {
-      const pages = prev.pages.map((page, i) => (i === pageIndex ? pageItems : page));
-      return { ...prev, pages };
-    });
-  }
-
-  function clonePages(pages: GridItem[][]): GridItem[][] {
-    return pages.map((page) =>
-      page.map((item) =>
-        item.kind === 'folder'
-          ? { ...item, children: item.children.map((c) => ({ ...c })) }
-          : { ...item },
-      ),
-    );
+    await applyGrid(gridReorderPage(gridView(), pageItems));
   }
 
   function onGridDragSessionStart() {
-    dragPagesSnapshot = {
-      pages: clonePages(ytab.pages),
-      pageIndex,
-    };
+    applyGridView(beginDragSession(gridView()));
   }
 
   async function onGridDragSessionCancel() {
-    const snap = dragPagesSnapshot;
-    dragPagesSnapshot = null;
-    if (!snap) return;
-    pageIndex = snap.pageIndex;
-    await persist((prev) => ({ ...prev, pages: snap.pages }));
+    if (!dragPagesSnapshot) return;
+    await applyGrid(cancelDragSession(gridView()));
   }
 
   async function pageFlipDuringDrag(
@@ -299,58 +253,20 @@
     fromPageWithoutItem: GridItem[],
     item: GridItem,
   ) {
-    const fromPage = pageIndex;
-    await persist((prev) => {
-      const pages = prev.pages.map((page, i) => {
-        if (i === fromPage) return fromPageWithoutItem;
-        if (i === toPage) {
-          const without = page.filter((x) => x.id !== item.id);
-          return [...without, item];
-        }
-        return page;
-      });
-      return { ...prev, pages };
-    });
-    pageIndex = toPage;
+    await applyGrid(gridPageFlipDuringDrag(gridView(), toPage, fromPageWithoutItem, item));
   }
 
   async function reorderFolderChildren(folderId: string, children: AppItem[]) {
-    await persist((prev) => ({
-      ...prev,
-      pages: prev.pages.map((page) =>
-        page.flatMap((item) => {
-          if (item.id !== folderId || item.kind !== 'folder') return [item];
-          return collapseFolder(item, children);
-        }),
-      ),
-    }));
-    if (openFolder?.id === folderId) {
-      if (children.length <= 1) openFolder = null;
-      else openFolder = { ...openFolder, children };
-    }
-  }
-
-  /** 空文件夹删除；只剩 1 个 App 则拆开回到网格 */
-  function collapseFolder(folder: FolderItem, children: AppItem[]): GridItem[] {
-    if (children.length === 0) return [];
-    if (children.length === 1) return [children[0]!];
-    return [{ ...folder, children }];
+    await applyGrid(gridReorderFolderChildren(gridView(), folderId, children));
   }
 
   async function openFolderItem(folder: FolderItem) {
+    const next = gridOpenFolderItem(gridView(), folder);
     if (folder.children.length <= 1) {
-      await persist((prev) => ({
-        ...prev,
-        pages: prev.pages.map((page) =>
-          page.flatMap((item) => {
-            if (item.id !== folder.id || item.kind !== 'folder') return [item];
-            return collapseFolder(item, item.children);
-          }),
-        ),
-      }));
+      await applyGrid(next);
       return;
     }
-    openFolder = folder;
+    applyGridView(next);
   }
 
   /** 文件夹拖出关窗后松手：按落点插入当前页 */
@@ -362,41 +278,10 @@
   ) {
     const page = ytab.pages[pageIndex] ?? [];
     const insertAt = insertIndexOnPage(page, clientX, clientY, appId);
-
-    openFolder = null;
-    await persist((prev) => {
-      let ejected: AppItem | undefined;
-      const pages = prev.pages.map((p) => {
-        const next: GridItem[] = [];
-        for (const item of p) {
-          if (item.id === folderId && item.kind === 'folder') {
-            const hit = item.children.find((c) => c.id === appId);
-            if (hit) ejected = hit;
-            const children = item.children.filter((c) => c.id !== appId);
-            next.push(...collapseFolder(item, children));
-          } else {
-            next.push(item);
-          }
-        }
-        return next;
-      });
-      if (!ejected) return prev;
-      const pi = pageIndex;
-      return {
-        ...prev,
-        pages: pages.map((p, i) => {
-          if (i !== pi) return p;
-          const without = p.filter((x) => x.id !== ejected!.id);
-          const at = Math.max(0, Math.min(insertAt, without.length));
-          const out = [...without];
-          out.splice(at, 0, ejected!);
-          return out;
-        }),
-      };
-    });
+    await applyGrid(gridEjectFromFolderAt(gridView(), folderId, appId, insertAt));
   }
 
-  /** 主网格落点：落在某图标边缘则插前/后，否则追加到末尾 */
+  /** 主网格落点：落在某图标边缘则插前/后，否则追加到末尾（DOM，本轮不进 appGrid） */
   function insertIndexOnPage(
     page: GridItem[],
     clientX: number,
@@ -427,17 +312,7 @@
   }
 
   async function renameFolder(folderId: string, name: string) {
-    await persist((prev) => ({
-      ...prev,
-      pages: prev.pages.map((page: GridItem[]) =>
-        page.map((item: GridItem) =>
-          item.id === folderId && item.kind === 'folder' ? { ...item, name } : item,
-        ),
-      ),
-    }));
-    if (openFolder?.id === folderId) {
-      openFolder = { ...openFolder, name };
-    }
+    await applyGrid(gridRenameFolder(gridView(), folderId, name));
   }
 
   async function onSettingsChange(settings: Settings) {

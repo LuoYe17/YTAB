@@ -2,6 +2,16 @@
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
   import IconSortGrid from './IconSortGrid.svelte';
 
+  /** DnD / 拖拽会话：由起始页接线，不在此散落成与 IconSortGrid 同形的扁平 props */
+  export type AppGridDnd = {
+    onMerge: (fromId: string, ontoId: string) => void;
+    onDropIntoFolder: (appId: string, folderId: string) => void;
+    onReorderPage: (pageItems: GridItem[]) => void;
+    onPageFlip: (toPage: number, fromPageWithoutItem: GridItem[], item: GridItem) => void;
+    onDragSessionStart: () => void;
+    onDragSessionCancel: () => void;
+  };
+
   let {
     items,
     pageIndex = 0,
@@ -10,12 +20,7 @@
     onOpenFolder,
     onPageChange,
     onAdd,
-    onMerge,
-    onDropIntoFolder,
-    onReorderPage,
-    onPageFlip,
-    onDragSessionStart,
-    onDragSessionCancel,
+    dnd,
   }: {
     items: GridItem[];
     pageIndex?: number;
@@ -24,12 +29,7 @@
     onOpenFolder: (folder: FolderItem) => void;
     onPageChange?: (index: number) => void;
     onAdd: () => void;
-    onMerge: (fromId: string, ontoId: string) => void;
-    onDropIntoFolder: (appId: string, folderId: string) => void;
-    onReorderPage: (pageItems: GridItem[]) => void;
-    onPageFlip: (toPage: number, fromPageWithoutItem: GridItem[], item: GridItem) => void;
-    onDragSessionStart: () => void;
-    onDragSessionCancel: () => void;
+    dnd: AppGridDnd;
   } = $props();
 
   let menu = $state<{ x: number; y: number } | null>(null);
@@ -63,12 +63,12 @@
     {pageCount}
     enableMerge={true}
     {onActivate}
-    onReorder={onReorderPage}
-    {onMerge}
-    {onDropIntoFolder}
-    {onPageFlip}
-    {onDragSessionStart}
-    {onDragSessionCancel}
+    onReorder={dnd.onReorderPage}
+    onMerge={dnd.onMerge}
+    onDropIntoFolder={dnd.onDropIntoFolder}
+    onPageFlip={dnd.onPageFlip}
+    onDragSessionStart={dnd.onDragSessionStart}
+    onDragSessionCancel={dnd.onDragSessionCancel}
     {onGridContextMenu}
   />
 

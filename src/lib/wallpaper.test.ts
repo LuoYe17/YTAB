@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type WallpaperState } from './types';
-import { createWallpaperSession, type WallpaperItem } from './wallpaper';
+import { createWallpaperSession, todayLocal, type WallpaperItem } from './wallpaper';
 
 function item(id: string): WallpaperItem {
   return { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: '2099-01-01' };
-}
-
-function todayStamp(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 describe('wallpaper session', () => {
@@ -59,7 +51,7 @@ describe('wallpaper session', () => {
     });
     const current: WallpaperState = {
       imageUrl: 'data:cur',
-      fetchedOn: todayStamp(),
+      fetchedOn: todayLocal(),
       wallhavenId: 'cur',
     };
     expect(await session.ensure(DEFAULT_SETTINGS, current, false)).toEqual({ kind: 'keep' });

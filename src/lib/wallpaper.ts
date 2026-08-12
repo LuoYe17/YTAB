@@ -25,7 +25,8 @@ type WallhavenSearchHit = {
   file_type?: string;
 };
 
-function todayLocal(): string {
+/** 本地自然日 YYYY-MM-DD；日更与 fetchedOn 必须用同一把尺，不能用 UTC 日界。 */
+export function todayLocal(): string {
   const d = new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -242,7 +243,7 @@ export type WallpaperSessionDeps = {
 };
 
 /**
- * 换图会话：scan 只解码不上屏；success 再交出成图。
+ * 换图会话：准备阶段只解码不上屏；提交阶段再交出成图。
  * 池空与有货同一条路径（一次成图），避免 thumbs → 全图连闪。
  */
 export function createWallpaperSession(deps: WallpaperSessionDeps) {
@@ -296,7 +297,6 @@ export function createWallpaperSession(deps: WallpaperSessionDeps) {
   return {
     prepare,
     commit,
-    refresh,
     ensure,
     get busy() {
       return busy;
@@ -319,6 +319,7 @@ function acquireFromPoolOrFetch(settings: Settings): Promise<WallpaperItem | nul
   return pooled ? Promise.resolve(pooled) : fetchRandomWallpaper(settings);
 }
 
+/** 起始页用的换图会话：取池或拉取、解码；上屏与 persist 仍由 App 做。 */
 export const wallpaperSession = createWallpaperSession({
   acquire: acquireFromPoolOrFetch,
   decode: decodeWallpaperImage,

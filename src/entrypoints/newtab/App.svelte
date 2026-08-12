@@ -58,7 +58,7 @@
   let openFolder = $state<FolderItem | null>(null);
   /** Esc / 取消跨页拖时整表回滚 */
   let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
-  /** 上屏 URL；scan 阶段仍是旧图，commit 后才换成新图。 */
+  /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
 
   onMount(() => {
@@ -112,12 +112,12 @@
     if (result.kind === 'switched') await applyCommittedWallpaper(result.item);
   }
 
-  /** Scan 阶段：只拉取/解码，不上屏。 */
+  /** 准备阶段：只拉取/解码，不上屏。 */
   function prepareWallpaperRefresh(): Promise<boolean> {
     return wallpaperSession.prepare(ytab.settings);
   }
 
-  /** Success 阶段：与绿勾同时上屏并落盘。 */
+  /** 提交阶段：与绿勾同时上屏并落盘。 */
   async function commitWallpaperRefresh(): Promise<void> {
     const item = wallpaperSession.commit();
     if (!item) return;

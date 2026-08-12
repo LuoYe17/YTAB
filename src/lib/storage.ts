@@ -1,6 +1,15 @@
+/** 持久化：chrome.storage 只放小 meta；壁纸与 App 图标像素在 IndexedDB。 */
+
 import { storage } from 'wxt/utils/storage';
-import { faviconUrlFor } from './defaults';
-import { createEmptyState, type AppItem, type GridItem, type YtabState } from './types';
+import { createEmptyState, type YtabState } from './types';
+import {
+  IDB_ICON_PREFIX,
+  collectAppIds,
+  extractIconBlobs,
+  hydrateIconBlobs,
+  iconIdbKey,
+  staleIconKeys,
+} from './iconPersist';
 
 const META_KEY = 'local:ytab:v1' as const;
 /** Legacy key — read once to migrate, then clear. */
@@ -64,25 +73,19 @@ async function idbSet(key: string, value: string): Promise<void> {
   }
 }
 
-/** Meta blob must stay small: no wallpaper pixels, no icon data-URLs. */
-function compactMeta(state: YtabState): YtabState {
-  const mapApp = (app: AppItem): AppItem => ({
-    ...app,
-    icon: app.icon.startsWith('data:') ? faviconUrlFor(app.url) : app.icon,
-  });
-  const mapItem = (item: GridItem): GridItem => {
-    if (item.kind === 'app') return mapApp(item);
-    return { ...item, children: item.children.map(mapApp) };
-  };
-  return {
-    ...state,
-    pages: state.pages.map((page) => page.map(mapItem)),
-    wallpaper: {
-      fetchedOn: state.wallpaper.fetchedOn,
-      wallhavenId: state.wallpaper.wallhavenId,
-      imageUrl: '',
-    },
-  };
+async function idbGetAllKeys(): Promise<string[]> {
+  const db = await openIdb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).getAllKeys();
+      req.onsuccess = () =>
+        resolve((req.result ?? []).filter((k): k is string => typeof k === 'string'));
+      req.onerror = () => reject(req.error ?? new Error('idb keys failed'));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 async function writeWallpaperImage(imageUrl: string): Promise<void> {
@@ -95,15 +98,57 @@ async function writeWallpaperImage(imageUrl: string): Promise<void> {
   }
 }
 
+async function writeIconBlobs(blobs: Map<string, string>, liveIds: Set<string>): Promise<void> {
+  const db = await openIdb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('idb icon write failed'));
+      for (const [id, data] of blobs) {
+        store.put(data, iconIdbKey(id));
+      }
+      const keysReq = store.getAllKeys();
+      keysReq.onsuccess = () => {
+        const keys = (keysReq.result ?? []).filter((k): k is string => typeof k === 'string');
+        for (const key of staleIconKeys(keys, liveIds)) {
+          store.delete(key);
+        }
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function readIconBlobs(): Promise<Map<string, string>> {
+  const keys = await idbGetAllKeys();
+  const blobs = new Map<string, string>();
+  for (const key of keys) {
+    if (!key.startsWith(IDB_ICON_PREFIX)) continue;
+    const value = await idbGet(key);
+    if (value) blobs.set(key.slice(IDB_ICON_PREFIX.length), value);
+  }
+  return blobs;
+}
+
 async function writeNow(state: YtabState): Promise<void> {
   const imageUrl = state.wallpaper.imageUrl ?? '';
-  // Meta first and alone — wallpaper failure must never wipe Apps.
-  await ytabStore.setValue(compactMeta(state));
+  const { meta, blobs } = extractIconBlobs(state);
+  // 像素先于 meta：chrome.storage 已不再装整包，先发 idb: 引用再丢像素会永久丢自定义图标。
   try {
     await writeWallpaperImage(imageUrl);
   } catch (err) {
     console.error('[ytab] wallpaper image persist failed', err);
   }
+  try {
+    await writeIconBlobs(blobs, collectAppIds(state));
+  } catch (err) {
+    console.error('[ytab] icon persist failed', err);
+    if (blobs.size > 0) return;
+  }
+  await ytabStore.setValue(meta);
 }
 
 export async function loadState(): Promise<YtabState> {
@@ -120,27 +165,27 @@ export async function loadState(): Promise<YtabState> {
   // Migrate pixels out of chrome.storage (old single-key or legacy split key).
   const legacy = (await legacyWallpaperStore.getValue()) ?? '';
   const embedded = state.wallpaper.imageUrl ?? '';
-  if (!imageUrl && (legacy || embedded)) {
+  const needsWallpaperMigrate = !imageUrl && !!(legacy || embedded);
+  const needsMetaStrip = embedded.startsWith('data:') || embedded.length > 2048;
+  if (needsWallpaperMigrate) {
     imageUrl = legacy || embedded;
-    try {
-      await writeWallpaperImage(imageUrl);
-      await ytabStore.setValue(compactMeta({ ...state, wallpaper: { ...state.wallpaper, imageUrl } }));
-    } catch (err) {
-      console.error('[ytab] wallpaper migrate failed', err);
-    }
-  } else if (embedded.startsWith('data:') || embedded.length > 2048) {
-    // Strip leftover pixels from meta even when IDB already has the image.
-    try {
-      await ytabStore.setValue(compactMeta(state));
-    } catch {
-      /* ignore */
-    }
   }
 
-  return {
-    ...state,
-    wallpaper: { ...state.wallpaper, imageUrl },
-  };
+  let iconBlobs = new Map<string, string>();
+  try {
+    iconBlobs = await readIconBlobs();
+  } catch (err) {
+    console.error('[ytab] icon read failed', err);
+  }
+
+  const loaded = hydrateIconBlobs({ ...state, wallpaper: { ...state.wallpaper, imageUrl } }, iconBlobs);
+  // chrome.storage 里若还嵌着 data: 图标，必须走 saveState 写入链，先落 IDB 再发 meta。
+  const needsIconMigrate = extractIconBlobs(state).blobs.size > 0;
+  if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate) {
+    await saveState(loaded);
+  }
+
+  return loaded;
 }
 
 export async function saveState(state: YtabState): Promise<void> {

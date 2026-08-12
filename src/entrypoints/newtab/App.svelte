@@ -33,6 +33,7 @@
   } from '../../lib/gridInsertGeometry';
   import { fetchHitokoto } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
+  import { downloadBlob, exportYtab, importYtab } from '../../lib/backup';
   import {
     createEmptyState,
     type AppItem,
@@ -293,6 +294,16 @@
     schedulePoolFill(next.settings);
   }
 
+  async function onExportBackup(opts: { includeIcons: boolean; includeApiKey: boolean }) {
+    const blob = await exportYtab($state.snapshot(ytab), opts);
+    downloadBlob(blob, `ytab-backup-${new Date().toISOString().slice(0, 10)}.ytab`);
+  }
+
+  async function onImportBackup(file: File) {
+    const state = await importYtab(file);
+    await onImportState(state);
+  }
+
   async function onResetAll() {
     wallpaperPool.clear();
     await persist(() => createEmptyState());
@@ -354,12 +365,12 @@
   {#if settingsOpen}
     <SettingsModal
       settings={ytab.settings}
-      getState={() => ytab}
       onClose={() => (settingsOpen = false)}
       onChange={onSettingsChange}
       onPrepareWallpaper={prepareWallpaperRefresh}
       onCommitWallpaper={commitWallpaperRefresh}
-      onImportState={onImportState}
+      onExport={onExportBackup}
+      onImport={onImportBackup}
       onResetAll={onResetAll}
     />
   {/if}

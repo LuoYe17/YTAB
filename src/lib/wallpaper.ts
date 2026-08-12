@@ -1,3 +1,5 @@
+/** 壁纸：Wallhaven 拉取、内存预取池、换图会话。一次成图；上屏与 persist 由调用方负责。 */
+
 import type { Settings, WallpaperState } from './types';
 
 const POOL_SIZE = 3;
@@ -21,10 +23,10 @@ type WallhavenSearchHit = {
   purity?: 'sfw' | 'sketchy' | 'nsfw';
   category?: string;
   file_type?: string;
-  thumbs?: { large?: string; original?: string; small?: string };
 };
 
-function todayLocal(): string {
+/** 本地自然日 YYYY-MM-DD；日更与 fetchedOn 必须用同一把尺，不能用 UTC 日界。 */
+export function todayLocal(): string {
   const d = new Date();
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -149,36 +151,6 @@ export async function fetchRandomWallpaper(
   }
 }
 
-/** Pool-empty progressive: small preview first (thumbs.large). */
-export async function fetchWallpaperPreview(
-  settings: Settings,
-): Promise<{ previewUrl: string; hit: WallhavenSearchHit } | null> {
-  const hit = await pickHit(settings);
-  if (!hit) return null;
-  const thumb = hit.thumbs?.large || hit.thumbs?.original || hit.path;
-  try {
-    const previewUrl = await toDisplayDataUrl(thumb);
-    return { previewUrl, hit };
-  } catch {
-    return { previewUrl: thumb, hit };
-  }
-}
-
-export async function finalizeWallpaperFromHit(
-  hit: WallhavenSearchHit,
-): Promise<WallpaperItem | null> {
-  try {
-    const imageUrl = await toDisplayDataUrl(hit.path);
-    return {
-      imageUrl,
-      wallhavenId: hit.id,
-      fetchedOn: todayLocal(),
-    };
-  } catch {
-    return null;
-  }
-}
-
 /** In-memory prefetch pool (not persisted). */
 class WallpaperPool {
   private items: WallpaperItem[] = [];
@@ -257,3 +229,99 @@ export function schedulePoolFill(settings: Settings): void {
     setTimeout(run, 800);
   }
 }
+
+export type WallpaperEnsureResult =
+  | { kind: 'keep' }
+  | { kind: 'switched'; item: WallpaperItem }
+  | { kind: 'failed' };
+
+export type WallpaperSessionDeps = {
+  acquire: (settings: Settings) => Promise<WallpaperItem | null>;
+  decode: (src: string) => Promise<void>;
+  /** 日更前丢掉旧池，避免过期过滤条件的预取图。 */
+  beforeDaily?: () => void;
+};
+
+/**
+ * 换图会话：准备阶段只解码不上屏；提交阶段再交出成图。
+ * 池空与有货同一条路径（一次成图），避免 thumbs → 全图连闪。
+ */
+export function createWallpaperSession(deps: WallpaperSessionDeps) {
+  let busy = false;
+  let pending: WallpaperItem | null = null;
+
+  async function prepare(settings: Settings): Promise<boolean> {
+    if (busy) return false;
+    busy = true;
+    pending = null;
+    try {
+      const item = await deps.acquire(settings);
+      if (!item) {
+        busy = false;
+        return false;
+      }
+      await deps.decode(item.imageUrl);
+      pending = item;
+      return true;
+    } catch {
+      busy = false;
+      return false;
+    }
+  }
+
+  function commit(): WallpaperItem | null {
+    const item = pending;
+    pending = null;
+    busy = false;
+    return item;
+  }
+
+  /** 无 UI 路径：准备 + 提交一次做完。 */
+  async function refresh(settings: Settings): Promise<WallpaperItem | null> {
+    const ok = await prepare(settings);
+    if (!ok) return null;
+    return commit();
+  }
+
+  async function ensure(
+    settings: Settings,
+    current: WallpaperState,
+    force: boolean,
+  ): Promise<WallpaperEnsureResult> {
+    if (!force && !needsDailyWallpaper(current)) return { kind: 'keep' };
+    deps.beforeDaily?.();
+    const item = await refresh(settings);
+    return item ? { kind: 'switched', item } : { kind: 'failed' };
+  }
+
+  return {
+    prepare,
+    commit,
+    ensure,
+    get busy() {
+      return busy;
+    },
+  };
+}
+
+/** 失败也放行，避免坏图卡死换图按钮。 */
+function decodeWallpaperImage(src: string): Promise<void> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = src;
+  });
+}
+
+function acquireFromPoolOrFetch(settings: Settings): Promise<WallpaperItem | null> {
+  const pooled = wallpaperPool.take();
+  return pooled ? Promise.resolve(pooled) : fetchRandomWallpaper(settings);
+}
+
+/** 起始页用的换图会话：取池或拉取、解码；上屏与 persist 仍由 App 做。 */
+export const wallpaperSession = createWallpaperSession({
+  acquire: acquireFromPoolOrFetch,
+  decode: decodeWallpaperImage,
+  beforeDaily: () => wallpaperPool.clear(),
+});

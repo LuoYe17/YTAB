@@ -44,10 +44,9 @@
     type YtabState,
   } from '../../lib/types';
   import {
-    fetchRandomWallpaper,
-    needsDailyWallpaper,
     schedulePoolFill,
     wallpaperPool,
+    wallpaperSession,
     type WallpaperItem,
   } from '../../lib/wallpaper';
 
@@ -59,9 +58,8 @@
   let openFolder = $state<FolderItem | null>(null);
   /** Esc / 取消跨页拖时整表回滚 */
   let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
-  /** What WallpaperStage paints (may briefly be a preview before final). */
+  /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
-  let wallpaperBusy = $state(false);
 
   onMount(() => {
     void bootstrap();
@@ -93,6 +91,12 @@
     wallpaperPool.rememberCurrent(item.wallhavenId);
   }
 
+  async function applyCommittedWallpaper(item: WallpaperItem) {
+    displayUrl = item.imageUrl;
+    await persistWallpaper(item);
+    schedulePoolFill(ytab.settings);
+  }
+
   async function refreshHitokoto() {
     const next = await fetchHitokoto();
     if (!next) return;
@@ -100,66 +104,25 @@
   }
 
   async function ensureWallpaper(force: boolean) {
-    if (!force && !needsDailyWallpaper(ytab.wallpaper)) {
+    const result = await wallpaperSession.ensure(ytab.settings, ytab.wallpaper, force);
+    if (result.kind === 'keep') {
       displayUrl = ytab.wallpaper.imageUrl;
       return;
     }
-    wallpaperPool.clear();
-    await switchWallpaper();
+    if (result.kind === 'switched') await applyCommittedWallpaper(result.item);
   }
 
-  let pendingRefresh: WallpaperItem | null = null;
-
-  /** Scan 阶段：只拉取/解码，不上屏。 */
-  async function prepareWallpaperRefresh(): Promise<boolean> {
-    if (wallpaperBusy) return false;
-    wallpaperBusy = true;
-    pendingRefresh = null;
-    try {
-      const item = wallpaperPool.take() ?? (await fetchRandomWallpaper(ytab.settings));
-      if (!item) {
-        wallpaperBusy = false;
-        return false;
-      }
-      await decodeImage(item.imageUrl);
-      pendingRefresh = item;
-      return true;
-    } catch {
-      wallpaperBusy = false;
-      return false;
-    }
+  /** 准备阶段：只拉取/解码，不上屏。 */
+  function prepareWallpaperRefresh(): Promise<boolean> {
+    return wallpaperSession.prepare(ytab.settings);
   }
 
-  /** Success 阶段：与绿勾同时上屏并落盘。 */
+  /** 提交阶段：与绿勾同时上屏并落盘。 */
   async function commitWallpaperRefresh(): Promise<void> {
-    const item = pendingRefresh;
-    pendingRefresh = null;
-    try {
-      if (!item) return;
-      displayUrl = item.imageUrl;
-      await persistWallpaper(item);
-      schedulePoolFill(ytab.settings);
-      await sleep(450);
-    } finally {
-      wallpaperBusy = false;
-    }
-  }
-
-  /** 日界等无 UI 路径：准备 + 提交一次做完。 */
-  async function switchWallpaper(): Promise<boolean> {
-    const ok = await prepareWallpaperRefresh();
-    if (!ok) return false;
-    await commitWallpaperRefresh();
-    return true;
-  }
-
-  function decodeImage(src: string): Promise<void> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve();
-      img.onerror = () => resolve();
-      img.src = src;
-    });
+    const item = wallpaperSession.commit();
+    if (!item) return;
+    await applyCommittedWallpaper(item);
+    await sleep(450);
   }
 
   function sleep(ms: number) {

@@ -34,6 +34,19 @@
       return { kind: item.kind, name: item.name };
     },
   });
+
+  const iconSrc = $derived(item.kind === 'app' ? displayAppIcon(item.url, item.icon) : '');
+  const showIcon = $derived(
+    !!iconSrc &&
+      !iconSrc.startsWith('idb:') &&
+      !iconSrc.startsWith('/') &&
+      !iconSrc.startsWith('chrome:'),
+  );
+  let imgFailed = $state(false);
+  $effect(() => {
+    void iconSrc;
+    imgFailed = false;
+  });
 </script>
 
 <button
@@ -64,9 +77,9 @@
       <div class="merge-preview" aria-hidden="true">
         <span></span><span></span><span></span><span></span>
       </div>
-    {:else if item.kind === 'app' && (item.icon || bundledIconUrl(item.url))}
+    {:else if item.kind === 'app' && showIcon && !imgFailed}
       <img
-        src={displayAppIcon(item.url, item.icon)}
+        src={iconSrc}
         alt=""
         draggable="false"
         onerror={(e) => {
@@ -75,6 +88,8 @@
           if (fb && el.dataset.fb !== '1') {
             el.dataset.fb = '1';
             el.src = fb;
+          } else {
+            imgFailed = true;
           }
         }}
       />

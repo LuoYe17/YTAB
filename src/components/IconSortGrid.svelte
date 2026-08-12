@@ -359,7 +359,11 @@
         }
         const source = localItems.find((i) => i.id === sourceId);
         const target = localItems.find((i) => i.id === targetId);
-        if (!source || !target) return;
+        if (!source || !target) {
+          clearDwell();
+          clearInsertPending();
+          return;
+        }
         if (canMerge(source, target) && hitEdgeRelative(cell.nx, cell.ny) === 'center') {
           clearInsertPending();
           startDwell(sourceId, targetId);
@@ -411,7 +415,11 @@
 
     const source = localItems.find((i) => i.id === sourceId);
     const target = localItems.find((i) => i.id === targetId);
-    if (!source || !target) return;
+    if (!source || !target) {
+      clearDwell();
+      clearInsertPending();
+      return;
+    }
 
     const { nx, ny } = normalizedInRect(x, y, tile.getBoundingClientRect());
     if (canMerge(source, target) && hitEdgeRelative(nx, ny) === 'center') {

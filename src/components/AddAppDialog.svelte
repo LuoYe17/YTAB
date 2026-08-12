@@ -21,26 +21,44 @@
   let name = $state(initial?.name ?? '');
   /* svelte-ignore state_referenced_locally */
   let icon = $state(initial?.icon ?? '');
-  let busy = $state(false);
+  let fetching = $state(false);
+  let saving = $state(false);
+  let autofillJob: Promise<void> | null = null;
 
   async function autofill() {
     const normalized = normalizeUrl(url);
     url = normalized;
     if (!name.trim()) name = hostnameFallback(normalized);
-    busy = true;
-    try {
-      if (!icon.trim()) icon = await resolveAppIcon(normalized);
-      // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
-      const res = await fetch(normalized, { method: 'GET' });
-      if (res.ok) {
-        const html = await res.text();
-        const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-        if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
+    fetching = true;
+    const job = (async () => {
+      const signal = AbortSignal.timeout(8000);
+      try {
+        if (!icon.trim()) {
+          const resolved = await Promise.race([
+            resolveAppIcon(normalized),
+            new Promise<string>((r) => {
+              signal.addEventListener('abort', () => r(''), { once: true });
+            }),
+          ]);
+          if (!icon.trim()) icon = resolved;
+        }
+        // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
+        const res = await fetch(normalized, { method: 'GET', signal });
+        if (res.ok) {
+          const html = await res.text();
+          const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+          if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
+        }
+      } catch {
+        // keep hostname / icon fallbacks
       }
-    } catch {
-      // keep hostname / icon fallbacks
+    })();
+    autofillJob = job;
+    try {
+      await job;
     } finally {
-      busy = false;
+      fetching = false;
+      if (autofillJob === job) autofillJob = null;
     }
   }
 
@@ -66,9 +84,10 @@
 
   async function submit(e: Event) {
     e.preventDefault();
-    if (!url.trim() || busy) return;
+    if (!url.trim() || saving) return;
+    if (autofillJob) await autofillJob;
     const normalized = normalizeUrl(url);
-    busy = true;
+    saving = true;
     try {
       let nextIcon = icon.trim();
       if (!nextIcon) nextIcon = await resolveAppIcon(normalized);
@@ -78,7 +97,7 @@
         : createAppFromUrl(normalized, nextName, nextIcon);
       onSave(base);
     } finally {
-      busy = false;
+      saving = false;
     }
   }
 </script>
@@ -107,7 +126,7 @@
     {/if}
     <div class="row">
       <button type="button" class="ghost" onclick={onCancel}>取消</button>
-      <button type="submit" disabled={busy}>{busy ? '获取中…' : '保存'}</button>
+      <button type="submit" disabled={saving}>{fetching || saving ? '获取中…' : '保存'}</button>
     </div>
   </form>
 </div>

@@ -78,7 +78,7 @@ async function urlToDataUrl(url: string): Promise<string> {
   if (url.startsWith('data:')) return url;
   try {
     const res = await fetch(url);
-    if (!res.ok) return url;
+    if (!res.ok) return '';
     const blob = await res.blob();
     if (!blob.type.startsWith('image/') && blob.type !== 'image/x-icon') {
       const buf = await blob.slice(0, 16).arrayBuffer();
@@ -88,13 +88,27 @@ async function urlToDataUrl(url: string): Promise<string> {
     }
     return blobToDataUrl(blob);
   } catch {
-    return url;
+    // 空串让 resolveAppIcon 走 Google，而不是把坏地址当成已有图
+    return '';
   }
 }
 
-/** 把内置表里的图填进网格；只改 hostname 命中的 App。 */
+/** 空 / 裂图引用 / Google 小图才换成内置；用户上传或自定义 URL 不动。 */
+function shouldApplyBundledIcon(icon: string): boolean {
+  if (!icon) return true;
+  if (icon.startsWith('idb:') || icon.startsWith('/') || icon.startsWith('chrome:')) return true;
+  try {
+    const u = new URL(icon);
+    return u.hostname === 'www.google.com' && u.pathname.includes('/s2/favicons');
+  } catch {
+    return false;
+  }
+}
+
+/** 把内置表里的图填进网格；只改 hostname 命中、且仍是自动抓取残留的 App。 */
 export function applyBundledIcons(state: YtabState, dataUrls: Map<string, string>): YtabState {
   const mapApp = (app: AppItem): AppItem => {
+    if (!shouldApplyBundledIcon(app.icon)) return app;
     const host = hostnameOf(app.url);
     const data = dataUrls.get(host) ?? dataUrls.get(host.replace(/^www\./, ''));
     if (!data) return app;

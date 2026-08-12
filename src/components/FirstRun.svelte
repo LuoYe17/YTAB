@@ -30,21 +30,29 @@
     if (phase !== 'idle') return;
     phase = 'scan';
     const started = Date.now();
+    try {
+      const [apps, hitokoto, wallpaper] = await Promise.all([
+        (selected === 'author'
+          ? buildAuthorDefaultAppsCached()
+          : Promise.resolve([] as AppItem[])
+        ).catch(() => [] as AppItem[]),
+        fetchHitokoto().catch(() => null),
+        fetchRandomWallpaper(settings)
+          .then((got) => (got.ok ? got.item : null))
+          .catch(() => null),
+      ]);
 
-    const [apps, hitokoto, wallpaper] = await Promise.all([
-      selected === 'author' ? buildAuthorDefaultAppsCached() : Promise.resolve([] as AppItem[]),
-      fetchHitokoto(),
-      fetchRandomWallpaper(settings).then((got) => (got.ok ? got.item : null)),
-    ]);
+      // 至少播一会扫描动画，避免闪一下就没了
+      const minMs = 700;
+      const left = minMs - (Date.now() - started);
+      if (left > 0) await sleep(left);
 
-    // 至少播一会扫描动画，避免闪一下就没了
-    const minMs = 700;
-    const left = minMs - (Date.now() - started);
-    if (left > 0) await sleep(left);
-
-    phase = 'success';
-    await sleep(650);
-    onChoose({ mode: selected, apps, hitokoto, wallpaper });
+      phase = 'success';
+      await sleep(650);
+      onChoose({ mode: selected, apps, hitokoto, wallpaper });
+    } catch {
+      phase = 'idle';
+    }
   }
 
   function sleep(ms: number) {

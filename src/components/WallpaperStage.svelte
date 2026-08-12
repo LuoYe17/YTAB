@@ -52,10 +52,10 @@
   }
 
   function decodeUrl(src: string): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve();
-      img.onerror = () => resolve();
+      img.onerror = () => reject(new Error('wallpaper decode failed'));
       img.src = src;
     });
   }

@@ -55,6 +55,7 @@
   import type { WallpaperFailFocus } from '../../lib/wallpaperFail';
 
   let ready = $state(false);
+  let loadFailed = $state(false);
   let ytab = $state(createEmptyState());
   let pageIndex = $state(0);
   let settingsOpen = $state(false);
@@ -68,13 +69,17 @@
   let mainEl = $state<HTMLElement | null>(null);
 
   onMount(() => {
-    void bootstrap().catch(() => {
-      ready = true;
-    });
+    void bootstrap();
   });
 
   async function bootstrap() {
-    ytab = await loadState();
+    try {
+      ytab = await loadState();
+    } catch {
+      loadFailed = true;
+      ready = true;
+      return;
+    }
     if (!localStorage.getItem('ytab:icon-bundle-v8')) {
       try {
         const bundled = await bundledIconDataUrls();
@@ -94,6 +99,12 @@
     await ensureWallpaper(false);
     wallpaperPool.rememberCurrent(ytab.wallpaper.wallhavenId);
     schedulePoolFill(ytab.settings);
+  }
+
+  async function retryLoad() {
+    loadFailed = false;
+    ready = false;
+    await bootstrap();
   }
 
   async function persist(updater: (prev: YtabState) => YtabState) {
@@ -343,6 +354,14 @@
 </script>
 
 {#if ready}
+  {#if loadFailed}
+    <div class="page">
+      <div class="load-fail">
+        <p>读取本地数据失败了 (｡•́︿•̀｡)</p>
+        <button type="button" onclick={retryLoad}>重试</button>
+      </div>
+    </div>
+  {:else}
   <div class="page">
     <WallpaperStage url={displayUrl} />
     <div class="shade"></div>
@@ -436,6 +455,7 @@
       onEjectAt={ejectFromFolderAt}
     />
   {/if}
+  {/if}
 {/if}
 
 <style>
@@ -444,6 +464,32 @@
     position: relative;
     background-color: #1a1b1e;
     color: #fff;
+  }
+  .load-fail {
+    min-height: 100vh;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 0.75rem;
+    position: relative;
+    z-index: 1;
+  }
+  .load-fail p {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.72);
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+  }
+  .load-fail button {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: #7ecbff;
+    cursor: pointer;
+    font: inherit;
+  }
+  .load-fail button:hover {
+    text-decoration: underline;
   }
   .shade {
     position: absolute;

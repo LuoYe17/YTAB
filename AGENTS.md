@@ -12,6 +12,10 @@
 
 单上下文：根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
 
+### 注释
+
+注释讲 **why** 不讲 what；代码讲不清时先改代码。公共 API（`src/lib/` 导出）用 TSDoc。详见 `docs/agents/commenting.md`。
+
 ### Git 分支
 
 长期 **`main`（可装基线）** + **`dev`（日常编码）**；大改短命分支开 PR 后由维护者手动 squash 进 `dev`，发布同理进 `main`。Agent **不得**自动 `gh pr merge`。详见 `docs/agents/github-flow.md` 与 ADR-0012。

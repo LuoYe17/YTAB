@@ -33,9 +33,11 @@
 ## 硬规则
 
 - 不直推产品改动到 `main`（`main` 仅收来自 `dev` 的 PR）
+- **`main` 受 GitHub Ruleset 保护**（Ruleset 名：`Protect main`）：禁止直推、强制推送与删除；合入须经 PR，且仅允许 **squash**；不要求审批人数（一人维护）。查看：[Rules](https://github.com/LuoYe17/YTAB/rules/20751987)
+- **`dev` 不设分支保护**（允许小改直推）；大改仍走 PR 是流程约定
 - **禁止自动合 PR**（含 squash / merge / rebase 合入）；除非用户当次明确说「合掉 / merge PR」
 - 无第三长期线（不要再养 `develop` 以外的并行主线名）
-- 暂不打版本 tag（上架再说）；本地以 `pnpm check && pnpm build` 为准，暂不上 CI
+- 暂不打版本 tag（上架再说）；本地以 `pnpm check && pnpm build` 为准，暂不上 CI；Ruleset **暂不**要求 status checks
 - **`prototypes/`**：仅本地（gitignore），不推远程、不合任何长期分支
 - **`.scratch/`**：本地 issues / specs，不进远程
 

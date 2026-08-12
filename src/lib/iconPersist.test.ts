@@ -6,6 +6,7 @@ import {
   extractIconBlobs,
   hydrateIconBlobs,
   staleIconKeys,
+  stripLocalIcons,
 } from './iconPersist';
 import { createEmptyState, type AppItem, type FolderItem } from './types';
 
@@ -59,5 +60,39 @@ describe('icon persist split', () => {
     expect(live).toEqual(new Set(['a', 'b']));
     const stale = staleIconKeys(['icon:a', 'icon:gone', 'wallpaperImage'], live);
     expect(stale).toEqual(['icon:gone']);
+  });
+
+  it('stripLocalIcons：data: 与 idb: 改成站点 favicon，http 与空保留', () => {
+    const http = 'https://cdn.example.com/a.png';
+    const state = {
+      ...createEmptyState(),
+      pages: [[
+        app('a', 'data:image/png;base64,aaa'),
+        app('b', `${META_ICON_PREFIX}b`),
+        app('c', http),
+        app('d', ''),
+      ]],
+    };
+    const next = stripLocalIcons(state);
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(
+      faviconUrlFor('https://example.com/a'),
+    );
+    expect(next.pages[0]![1]?.kind === 'app' && next.pages[0]![1].icon).toBe(
+      faviconUrlFor('https://example.com/b'),
+    );
+    expect(next.pages[0]![2]?.kind === 'app' && next.pages[0]![2].icon).toBe(http);
+    expect(next.pages[0]![3]?.kind === 'app' && next.pages[0]![3].icon).toBe('');
+  });
+
+  it('stripLocalIcons keepPackedRefs：ZIP 内 icon: 保留，未打包的 idb: 仍剥离', () => {
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('a', 'icon:a'), app('b', `${META_ICON_PREFIX}b`)]],
+    };
+    const next = stripLocalIcons(state, true);
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe('icon:a');
+    expect(next.pages[0]![1]?.kind === 'app' && next.pages[0]![1].icon).toBe(
+      faviconUrlFor('https://example.com/b'),
+    );
   });
 });

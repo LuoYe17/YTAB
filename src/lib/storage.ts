@@ -136,8 +136,7 @@ async function readIconBlobs(): Promise<Map<string, string>> {
 async function writeNow(state: YtabState): Promise<void> {
   const imageUrl = state.wallpaper.imageUrl ?? '';
   const { meta, blobs } = extractIconBlobs(state);
-  // Meta first and alone — wallpaper / icon pixel failure must never wipe Apps.
-  await ytabStore.setValue(meta);
+  // 像素先于 meta：chrome.storage 已不再装整包，先发 idb: 引用再丢像素会永久丢自定义图标。
   try {
     await writeWallpaperImage(imageUrl);
   } catch (err) {
@@ -147,7 +146,9 @@ async function writeNow(state: YtabState): Promise<void> {
     await writeIconBlobs(blobs, collectAppIds(state));
   } catch (err) {
     console.error('[ytab] icon persist failed', err);
+    if (blobs.size > 0) return;
   }
+  await ytabStore.setValue(meta);
 }
 
 export async function loadState(): Promise<YtabState> {
@@ -164,23 +165,10 @@ export async function loadState(): Promise<YtabState> {
   // Migrate pixels out of chrome.storage (old single-key or legacy split key).
   const legacy = (await legacyWallpaperStore.getValue()) ?? '';
   const embedded = state.wallpaper.imageUrl ?? '';
-  if (!imageUrl && (legacy || embedded)) {
+  const needsWallpaperMigrate = !imageUrl && !!(legacy || embedded);
+  const needsMetaStrip = embedded.startsWith('data:') || embedded.length > 2048;
+  if (needsWallpaperMigrate) {
     imageUrl = legacy || embedded;
-    try {
-      await writeWallpaperImage(imageUrl);
-      const { meta } = extractIconBlobs({ ...state, wallpaper: { ...state.wallpaper, imageUrl } });
-      await ytabStore.setValue(meta);
-    } catch (err) {
-      console.error('[ytab] wallpaper migrate failed', err);
-    }
-  } else if (embedded.startsWith('data:') || embedded.length > 2048) {
-    // Strip leftover pixels from meta even when IDB already has the image.
-    try {
-      const { meta } = extractIconBlobs(state);
-      await ytabStore.setValue(meta);
-    } catch {
-      /* ignore */
-    }
   }
 
   let iconBlobs = new Map<string, string>();
@@ -190,7 +178,14 @@ export async function loadState(): Promise<YtabState> {
     console.error('[ytab] icon read failed', err);
   }
 
-  return hydrateIconBlobs({ ...state, wallpaper: { ...state.wallpaper, imageUrl } }, iconBlobs);
+  const loaded = hydrateIconBlobs({ ...state, wallpaper: { ...state.wallpaper, imageUrl } }, iconBlobs);
+  // chrome.storage 里若还嵌着 data: 图标，必须走 saveState 写入链，先落 IDB 再发 meta。
+  const needsIconMigrate = extractIconBlobs(state).blobs.size > 0;
+  if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate) {
+    await saveState(loaded);
+  }
+
+  return loaded;
 }
 
 export async function saveState(state: YtabState): Promise<void> {

@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { stripLocalIcons } from './iconPersist';
 import type { YtabState } from './types';
 
 const META_NAME = 'ytab.json';
@@ -9,13 +10,17 @@ export type ExportOptions = {
   includeApiKey: boolean;
 };
 
-/** Export state as a .ytab ZIP blob. */
+/**
+ * 导出 `.ytab` ZIP。
+ * `$state` 代理不能 `structuredClone`，用 JSON 深拷贝。
+ * 不含图标时（以及打包失败的残留）把本地引用改成站点 favicon，避免换机后无法解析。
+ */
 export async function exportYtab(
   state: YtabState,
   options: ExportOptions,
 ): Promise<Blob> {
   const zip = new JSZip();
-  const clone: YtabState = structuredClone(state);
+  let clone: YtabState = JSON.parse(JSON.stringify(state)) as YtabState;
 
   if (!options.includeApiKey) {
     clone.settings.wallhavenApiKey = '';
@@ -38,6 +43,7 @@ export async function exportYtab(
       }
     }
   }
+  clone = stripLocalIcons(clone, options.includeIcons);
 
   zip.file(
     META_NAME,

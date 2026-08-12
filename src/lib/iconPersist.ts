@@ -83,3 +83,15 @@ export function staleIconKeys(existingKeys: string[], liveIds: Set<string>): str
     return !liveIds.has(key.slice(IDB_ICON_PREFIX.length));
   });
 }
+
+/**
+ * 备份里只留另一台设备能解析的图标。
+ * `keepPackedRefs`：ZIP 内已打包的 `icon:` 引用保留；其余 data: / idb: 改成站点 favicon。
+ */
+export function stripLocalIcons(state: YtabState, keepPackedRefs = false): YtabState {
+  return mapApps(state, (app) => {
+    if (keepPackedRefs && app.icon.startsWith('icon:')) return app;
+    if (!app.icon || app.icon.startsWith('http')) return app;
+    return { ...app, icon: faviconUrlFor(app.url) };
+  });
+}

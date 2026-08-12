@@ -295,7 +295,7 @@
   }
 
   async function onExportBackup(opts: { includeIcons: boolean; includeApiKey: boolean }) {
-    const blob = await exportYtab(ytab, opts);
+    const blob = await exportYtab($state.snapshot(ytab), opts);
     downloadBlob(blob, `ytab-backup-${new Date().toISOString().slice(0, 10)}.ytab`);
   }
 

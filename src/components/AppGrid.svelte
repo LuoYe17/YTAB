@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
+  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import IconSortGrid from './IconSortGrid.svelte';
 
-  /** DnD / 拖拽会话：由起始页接线，不在此散落成与 IconSortGrid 同形的扁平 props */
+  /** 起始页对 App 网格拖拽结果的接线（由 IconSortDragOutcome 适配而来） */
   export type AppGridDnd = {
     onMerge: (fromId: string, ontoId: string) => void;
     onDropIntoFolder: (appId: string, folderId: string) => void;
@@ -40,6 +41,31 @@
     else onOpenFolder(item);
   }
 
+  function onDragOutcome(outcome: IconSortDragOutcome) {
+    switch (outcome.type) {
+      case 'sessionStart':
+        dnd.onDragSessionStart();
+        break;
+      case 'sessionCancel':
+        dnd.onDragSessionCancel();
+        break;
+      case 'reorder':
+        dnd.onReorderPage(outcome.items);
+        break;
+      case 'merge':
+        dnd.onMerge(outcome.fromId, outcome.ontoId);
+        break;
+      case 'intoFolder':
+        dnd.onDropIntoFolder(outcome.appId, outcome.folderId);
+        break;
+      case 'pageFlip':
+        dnd.onPageFlip(outcome.toPage, outcome.fromPageWithoutItem, outcome.item);
+        break;
+      default:
+        break;
+    }
+  }
+
   function onGridContextMenu(e: MouseEvent) {
     e.preventDefault();
     menu = { x: e.clientX, y: e.clientY };
@@ -63,12 +89,7 @@
     {pageCount}
     enableMerge={true}
     {onActivate}
-    onReorder={dnd.onReorderPage}
-    onMerge={dnd.onMerge}
-    onDropIntoFolder={dnd.onDropIntoFolder}
-    onPageFlip={dnd.onPageFlip}
-    onDragSessionStart={dnd.onDragSessionStart}
-    onDragSessionCancel={dnd.onDragSessionCancel}
+    {onDragOutcome}
     {onGridContextMenu}
   />
 

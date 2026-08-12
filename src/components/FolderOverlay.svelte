@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
+  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import IconSortGrid from './IconSortGrid.svelte';
 
   let {
@@ -37,17 +38,22 @@
     if (item.kind === 'app') onOpenApp(item);
   }
 
-  function onReorder(next: GridItem[]) {
-    const children = next.filter((i): i is AppItem => i.kind === 'app');
-    onReorderChildren(folder.id, children);
-  }
-
-  function onOutsideDwell() {
-    shellDismissed = true;
-  }
-
-  function onOutsideDrop(appId: string, clientX: number, clientY: number) {
-    onEjectAt(folder.id, appId, clientX, clientY);
+  function onDragOutcome(outcome: IconSortDragOutcome) {
+    switch (outcome.type) {
+      case 'reorder': {
+        const children = outcome.items.filter((i): i is AppItem => i.kind === 'app');
+        onReorderChildren(folder.id, children);
+        break;
+      }
+      case 'outsideDwell':
+        shellDismissed = true;
+        break;
+      case 'outsideDrop':
+        onEjectAt(folder.id, outcome.itemId, outcome.clientX, outcome.clientY);
+        break;
+      default:
+        break;
+    }
   }
 </script>
 
@@ -83,9 +89,7 @@
       compact={true}
       outsideRoot={panelEl}
       {onActivate}
-      {onReorder}
-      {onOutsideDwell}
-      {onOutsideDrop}
+      {onDragOutcome}
     />
   </div>
 </div>

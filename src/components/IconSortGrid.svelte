@@ -2,6 +2,7 @@
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
   import type { GridItem } from '../lib/types';
+  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import {
     hitEdgeRelative,
     insertIndexFromHit,
@@ -16,16 +17,9 @@
     pageIndex = 0,
     pageCount = 1,
     onActivate,
-    onReorder,
-    onMerge,
-    onDropIntoFolder,
-    onPageFlip,
-    onDragSessionStart,
-    onDragSessionCancel,
+    onDragOutcome,
     onGridContextMenu,
     outsideRoot = null,
-    onOutsideDwell,
-    onOutsideDrop,
   }: {
     items: GridItem[];
     /** false = 仅换位（文件夹内部） */
@@ -34,19 +28,10 @@
     pageIndex?: number;
     pageCount?: number;
     onActivate: (item: GridItem) => void;
-    onReorder: (next: GridItem[]) => void;
-    onMerge?: (fromId: string, ontoId: string) => void;
-    onDropIntoFolder?: (appId: string, folderId: string) => void;
-    /** 边缘翻页：from 页已去掉 item；to 页应已含 item */
-    onPageFlip?: (toPage: number, fromPageWithoutItem: GridItem[], item: GridItem) => void;
-    onDragSessionStart?: () => void;
-    onDragSessionCancel?: () => void;
+    onDragOutcome: (outcome: IconSortDragOutcome) => void;
     onGridContextMenu?: (e: MouseEvent) => void;
     /** 指针拖出此元素外并停住 → 仅视觉关窗，拖拽继续跟手 */
     outsideRoot?: HTMLElement | null;
-    onOutsideDwell?: () => void;
-    /** 关窗跟手后松手：按坐标落到主网格 */
-    onOutsideDrop?: (itemId: string, clientX: number, clientY: number) => void;
   } = $props();
 
   const flipMs = 220;
@@ -196,7 +181,7 @@
   }
 
   function doPageFlip(side: 'left' | 'right') {
-    if (!activeId || !onPageFlip) return;
+    if (!activeId || pageCount <= 1) return;
     const item = activeItem();
     if (!item) return;
     const toPage = pageIndex + (side === 'left' ? -1 : 1);
@@ -207,12 +192,17 @@
     clearInsertPending();
     flipCooldownUntil = Date.now() + PAGE_FLIP_COOLDOWN_MS;
     didFlip = true;
-    onPageFlip(toPage, fromWithout, item);
+    onDragOutcome({
+      type: 'pageFlip',
+      toPage,
+      fromPageWithoutItem: fromWithout,
+      item,
+    });
   }
 
   /** @returns true 若指针在翻页热区（并处理计时） */
   function tryPageEdge(): boolean {
-    if (!activeId || !onPageFlip || pageCount <= 1) {
+    if (!activeId || pageCount <= 1) {
       clearEdgePending();
       return false;
     }
@@ -248,7 +238,7 @@
 
   /** 拖出 outsideRoot 外并停住：只通知关窗，拖拽与浮层继续跟手 */
   function tryOutsideDwell(): boolean {
-    if (!activeId || !outsideRoot || !onOutsideDwell) {
+    if (!activeId || !outsideRoot) {
       if (!outsideLocked) clearOutsidePending();
       return false;
     }
@@ -280,7 +270,7 @@
       clearDwell();
       clearInsertPending();
       clearEdgePending();
-      onOutsideDwell();
+      onDragOutcome({ type: 'outsideDwell' });
     }, OUTSIDE_DWELL_MS);
     return true;
   }
@@ -297,7 +287,7 @@
     clearEdgePending();
     clearOutsidePending();
     suppressClick = false;
-    onDragSessionStart?.();
+    onDragOutcome({ type: 'sessionStart' });
     window.addEventListener('pointermove', onPointerTrack, { passive: true });
   }
 
@@ -410,12 +400,17 @@
       orderDirty = false;
       didFlip = false;
       if (event.canceled || !sourceId) return;
-      onOutsideDrop?.(sourceId, dropX, dropY);
+      onDragOutcome({
+        type: 'outsideDrop',
+        itemId: sourceId,
+        clientX: dropX,
+        clientY: dropY,
+      });
       return;
     }
 
     if (event.canceled) {
-      onDragSessionCancel?.();
+      onDragOutcome({ type: 'sessionCancel' });
       orderDirty = false;
       didFlip = false;
       return;
@@ -425,9 +420,9 @@
       const source = localItems.find((i) => i.id === sourceId) ?? items.find((i) => i.id === sourceId);
       const target = localItems.find((i) => i.id === dwellId) ?? items.find((i) => i.id === dwellId);
       if (source?.kind === 'app' && target?.kind === 'app') {
-        onMerge?.(sourceId, dwellId);
+        onDragOutcome({ type: 'merge', fromId: sourceId, ontoId: dwellId });
       } else if (source?.kind === 'app' && target?.kind === 'folder') {
-        onDropIntoFolder?.(sourceId, dwellId);
+        onDragOutcome({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
       }
       orderDirty = false;
       didFlip = false;
@@ -439,7 +434,7 @@
         !didFlip &&
         localItems.length === orderAtDragStart.length &&
         localItems.every((item, i) => item.id === orderAtDragStart[i]);
-      if (!same) onReorder(localItems);
+      if (!same) onDragOutcome({ type: 'reorder', items: localItems });
     }
     orderDirty = false;
     didFlip = false;

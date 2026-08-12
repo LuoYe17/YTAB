@@ -15,7 +15,7 @@
 
 1. 同步并检出 `dev`
 2. **小改**：直接提交在 `dev` 上并 push  
-3. **大改**：从 `dev` 开 `feat/…` / `fix/…` / `chore/…` → 开 PR（base=`dev`）→ **由维护者手动** **squash** 合入 `dev` → 删分支  
+3. **大改**：从 `dev` 开 `feat/…` / `fix/…` / `chore/…` → 开 PR（base=`dev`）→ **由维护者手动** **squash** 合入 `dev` → 删分支。**同一条线上的相关改动攒成一条 PR 再开**（CodeRabbit 试用约 3 次审查/小时；拆多条会把额度打光）。无关的两条线不要硬捏。  
 4. **发布**：`dev` → 开 PR（base=`main`）→ **由维护者手动** **squash** 合入 `main`
 
 提交说明用 **中文**，并加英文类型前缀（Conventional Commits 风格），例如：
@@ -45,5 +45,5 @@
 
 - 默认在 **`dev`** 上改代码与提交；用户说「提交 / push」且未指 `main` 时，对准 `dev`
 - 提交信息：`英文前缀:` + 中文说明（见上文）；不要省略前缀
-- **大改**：push 短命分支后可 `gh pr create`（base=`dev`），然后 **停下**；把 PR URL 交给用户，**不要** `gh pr merge`
+- **大改**：相关改动在同一短命分支上做完再 `gh pr create`（base=`dev`），然后 **停下**；把 PR URL 交给用户，**不要** `gh pr merge`。不要把可攒的切片拆成多条 PR。
 - 发布进 `main`：仅当用户明确要求时开 `dev`→`main` 的 PR；同样 **不要** 自动合入

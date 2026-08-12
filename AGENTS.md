@@ -18,4 +18,4 @@
 
 ### Git 分支
 
-长期 **`main`（可装基线）** + **`dev`（日常编码）**；大改短命分支开 PR 后由维护者手动 squash 进 `dev`，发布同理进 `main`。Agent **不得**自动 `gh pr merge`。详见 `docs/agents/github-flow.md` 与 ADR-0012。
+长期 **`main`（可装基线）** + **`dev`（日常编码）**；大改短命分支开 PR 后由维护者手动 squash 进 `dev`，发布同理进 `main`。相关大改攒成一条 PR 再开。Agent **不得**自动 `gh pr merge`。详见 `docs/agents/github-flow.md` 与 ADR-0012。

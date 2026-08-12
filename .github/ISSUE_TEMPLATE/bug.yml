@@ -1,0 +1,39 @@
+name: Bug
+description: 功能不正常或崩溃
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 尽量具体
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器与版本
+      placeholder: 例如 Chrome 128 / Brave 1.xx
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其它
+      description: 截图、控制台报错等（可选）

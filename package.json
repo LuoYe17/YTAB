@@ -13,7 +13,8 @@
     "zip:firefox": "wxt zip -b firefox",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "prototype:dnd": "pnpm --dir prototypes/app-grid-dnd dev",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@dnd-kit/dom": "^0.5.0",
@@ -24,6 +25,7 @@
     "tslib": "^2.8.1",
     "typescript": "^5.9.3",
     "vite": "^8.1.5",
+    "vitest": "^4.1.10",
     "web-ext": "^10.5.0",
     "wxt": "^0.21.4"
   },

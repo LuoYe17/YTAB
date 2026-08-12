@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fade } from 'svelte/transition';
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
   import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import IconSortGrid from './IconSortGrid.svelte';
@@ -22,6 +23,7 @@
     onPageChange,
     onAdd,
     dnd,
+    hitRoot = null,
   }: {
     items: GridItem[];
     pageIndex?: number;
@@ -31,9 +33,12 @@
     onPageChange?: (index: number) => void;
     onAdd: () => void;
     dnd: AppGridDnd;
+    /** 落点带；起始页传 main，这样时钟/搜索上方也能插到首位 */
+    hitRoot?: HTMLElement | null;
   } = $props();
 
   let menu = $state<{ x: number; y: number } | null>(null);
+  let slotEl = $state<HTMLElement | null>(null);
 
   function onActivate(item: GridItem) {
     menu = null;
@@ -83,7 +88,8 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="grid-wrap" role="presentation" onclick={closeMenu}>
+<div class="hit-root" bind:this={slotEl} role="presentation" onclick={closeMenu}>
+  <div class="grid-wrap" role="presentation">
   <IconSortGrid
     {items}
     {pageIndex}
@@ -92,6 +98,7 @@
     {onActivate}
     {onDragOutcome}
     {onGridContextMenu}
+    hitRoot={hitRoot ?? slotEl}
   />
 
   {#if pageCount > 1 && onPageChange}
@@ -107,17 +114,26 @@
       {/each}
     </div>
   {/if}
+  </div>
 </div>
 
 {#if menu}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="menu-backdrop" onclick={closeMenu} role="presentation"></div>
-  <div class="ctx-menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`} role="menu">
+  <div class="menu-backdrop" onclick={closeMenu} role="presentation" transition:fade={{ duration: 120 }}></div>
+  <div class="ctx-menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`} role="menu" transition:fade={{ duration: 120 }}>
     <button type="button" role="menuitem" onclick={addFromMenu}>添加 App</button>
   </div>
 {/if}
 
 <style>
+  .hit-root {
+    width: 100%;
+    flex: 1;
+    min-height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
   .grid-wrap {
     display: flex;
     flex-direction: column;
@@ -152,7 +168,8 @@
     min-width: 132px;
     padding: 0.3rem;
     border-radius: 10px;
-    background: rgba(40, 40, 42, 0.96);
+    background: rgba(32, 32, 36, 0.72);
+    backdrop-filter: blur(18px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
   }
@@ -167,8 +184,9 @@
     border-radius: 6px;
     font-size: 0.85rem;
     cursor: pointer;
+    transition: background 0.15s ease;
   }
   .ctx-menu button:hover {
-    background: #0a84ff;
+    background: rgba(255, 255, 255, 0.14);
   }
 </style>

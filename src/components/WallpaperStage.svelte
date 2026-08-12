@@ -18,7 +18,9 @@
     const next = url;
     if (!next) return;
     const my = ++gen;
-    chain = chain.then(() => crossfadeTo(next, my));
+    chain = chain.then(() => crossfadeTo(next, my)).catch(() => {
+      /* 解码失败保持当前层 */
+    });
   });
 
   async function crossfadeTo(next: string, my: number) {

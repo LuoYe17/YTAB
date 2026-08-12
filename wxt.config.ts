@@ -18,8 +18,9 @@ export default defineConfig({
     ],
   },
   vite: () => ({
+    assetsInclude: ['**/*.ico'],
     optimizeDeps: {
-      exclude: ['@dnd-kit/svelte', '@dnd-kit/svelte/sortable'],
+      exclude: ['@dnd-kit/svelte', '@dnd-kit/svelte/sortable', 'favicon-pro'],
     },
   }),
   // 作者本机只有 Brave，无 Chrome；把 chrome 通道指到 Brave

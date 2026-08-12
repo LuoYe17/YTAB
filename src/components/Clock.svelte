@@ -39,9 +39,9 @@
   }
   .time {
     font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
-    font-weight: 300;
+    font-weight: 700;
     font-size: clamp(3.5rem, 9vw, 6.5rem);
-    letter-spacing: 0.04em;
+    letter-spacing: -0.02em;
     line-height: 1;
     font-variant-numeric: tabular-nums;
   }

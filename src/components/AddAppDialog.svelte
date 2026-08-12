@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { fade, scale } from 'svelte/transition';
   import type { AppItem } from '../lib/types';
-  import { createAppFromUrl, faviconUrlFor, hostnameFallback, normalizeUrl } from '../lib/defaults';
+  import { createAppFromUrl, hostnameFallback, normalizeUrl } from '../lib/defaults';
+  import { resolveAppIcon } from '../lib/appIcons';
 
   let {
     initial = null,
@@ -25,10 +27,10 @@
     const normalized = normalizeUrl(url);
     url = normalized;
     if (!name.trim()) name = hostnameFallback(normalized);
-    if (!icon.trim()) icon = faviconUrlFor(normalized);
     busy = true;
     try {
-      // Best-effort: page title via fetch (may fail CORS; favicon still works)
+      if (!icon.trim()) icon = await resolveAppIcon(normalized);
+      // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
       const res = await fetch(normalized, { method: 'GET' });
       if (res.ok) {
         const html = await res.text();
@@ -36,7 +38,7 @@
         if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
       }
     } catch {
-      // keep hostname / favicon fallbacks
+      // keep hostname / icon fallbacks
     } finally {
       busy = false;
     }
@@ -62,18 +64,27 @@
     reader.readAsDataURL(file);
   }
 
-  function submit(e: Event) {
+  async function submit(e: Event) {
     e.preventDefault();
-    if (!url.trim()) return;
-    const base = initial
-      ? { ...initial, url: normalizeUrl(url), name: name.trim() || hostnameFallback(url), icon: icon || faviconUrlFor(url) }
-      : createAppFromUrl(url, name, icon);
-    onSave(base);
+    if (!url.trim() || busy) return;
+    const normalized = normalizeUrl(url);
+    busy = true;
+    try {
+      let nextIcon = icon.trim();
+      if (!nextIcon) nextIcon = await resolveAppIcon(normalized);
+      const nextName = name.trim() || hostnameFallback(normalized);
+      const base = initial
+        ? { ...initial, url: normalized, name: nextName, icon: nextIcon }
+        : createAppFromUrl(normalized, nextName, nextIcon);
+      onSave(base);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true">
-  <form class="card" onsubmit={submit}>
+<div class="overlay" role="dialog" aria-modal="true" transition:fade={{ duration: 160 }}>
+  <form class="card" onsubmit={submit} transition:scale={{ duration: 200, start: 0.96 }}>
     <h2>{initial ? '编辑 App' : '添加 App'}</h2>
     <label>
       网址
@@ -112,14 +123,15 @@
   }
   .card {
     width: min(400px, 92vw);
-    background: rgba(28, 28, 30, 0.96);
+    background: rgba(28, 28, 32, 0.55);
+    backdrop-filter: blur(24px) saturate(1.2);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     color: #f5f5f7;
     border-radius: 12px;
     padding: 1.2rem;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
-    border: 1px solid rgba(255, 255, 255, 0.08);
   }
   h2 {
     margin: 0 0 0.25rem;

@@ -15,7 +15,7 @@ stats-*.json
 web-ext.config.ts
 
 # Local scratch (issue tracker); keep structure if committed later
-.scratch/**
+.scratch/
 
 # Throwaway prototypes — local / throwaway branch only; never on main
 prototypes/

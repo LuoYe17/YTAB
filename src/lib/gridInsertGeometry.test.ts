@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   EDGE_MIN,
+  cellHit,
   hitEdgeRelative,
+  insertIndexForDropBand,
+  insertIndexForGridPointer,
   insertIndexFromHit,
   normalizedInRect,
+  type GridMetrics,
 } from './gridInsertGeometry';
 
 describe('gridInsertGeometry', () => {
@@ -53,5 +57,56 @@ describe('gridInsertGeometry', () => {
     const { nx, ny } = normalizedInRect(60, 40, { left: 50, top: 30, width: 100, height: 100 });
     expect(nx).toBeCloseTo(0.1);
     expect(ny).toBeCloseTo(0.1);
+  });
+
+  const eightCol: GridMetrics = {
+    left: 0,
+    top: 0,
+    width: 800,
+    height: 200,
+    cols: 8,
+    colStride: 100,
+    rowStride: 100,
+  };
+
+  it('cellHit：第二行第 4 格', () => {
+    const hit = cellHit(350, 150, eightCol);
+    expect(hit?.index).toBe(11);
+    expect(hit?.nx).toBeCloseTo(0.5);
+    expect(hit?.ny).toBeCloseTo(0.5);
+  });
+
+  it('末行右侧空格插到列表末尾', () => {
+    // 11 个图标占 0–10；格 11 起为空
+    expect(insertIndexForGridPointer(350, 150, eightCol, 11, 'skip')).toBe(11);
+    expect(insertIndexForGridPointer(750, 150, eightCol, 11, 'skip')).toBe(11);
+  });
+
+  it('已有格右侧为 after，中心 skip 不插入', () => {
+    expect(insertIndexForGridPointer(90, 50, eightCol, 11, 'skip')).toBe(1);
+    expect(insertIndexForGridPointer(50, 50, eightCol, 11, 'skip')).toBeNull();
+  });
+
+  it('网格外不插入', () => {
+    expect(insertIndexForGridPointer(-10, 50, eightCol, 11, 'skip')).toBeNull();
+    expect(insertIndexForGridPointer(50, 250, eightCol, 11, 'skip')).toBeNull();
+  });
+
+  const band = { left: -200, top: -20, right: 1000, bottom: 600 };
+
+  it('落点带：网格左边 → 首位，下边/右边 → 末尾', () => {
+    expect(insertIndexForDropBand(-50, 50, eightCol, 11, 'skip', band)).toBe(0);
+    expect(insertIndexForDropBand(50, 400, eightCol, 11, 'skip', band)).toBe(11);
+    expect(insertIndexForDropBand(900, 50, eightCol, 11, 'skip', band)).toBe(11);
+  });
+
+  it('落点带：网格上方 → 首位；右上以「右」为准插末尾', () => {
+    expect(insertIndexForDropBand(50, -10, eightCol, 11, 'skip', band)).toBe(0);
+    expect(insertIndexForDropBand(900, -10, eightCol, 11, 'skip', band)).toBe(11);
+  });
+
+  it('落点带：带外仍不插入；左下以「下」为准插末尾', () => {
+    expect(insertIndexForDropBand(-50, 50, eightCol, 11, 'skip', { left: 0, top: 0, right: 800, bottom: 200 })).toBeNull();
+    expect(insertIndexForDropBand(-50, 400, eightCol, 11, 'skip', band)).toBe(11);
   });
 });

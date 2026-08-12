@@ -13,15 +13,15 @@ describe('wallpaper session', () => {
       acquire: async () => {
         const next = item('a');
         acquired.push(next);
-        return next;
+        return { ok: true, item: next };
       },
       decode: async () => {},
     });
 
     const preparing = session.prepare(DEFAULT_SETTINGS);
     expect(session.busy).toBe(true);
-    expect(await session.prepare(DEFAULT_SETTINGS)).toBe(false);
-    expect(await preparing).toBe(true);
+    expect(await session.prepare(DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'busy' });
+    expect(await preparing).toEqual({ ok: true });
 
     const committed = session.commit();
     expect(committed?.wallhavenId).toBe('a');
@@ -32,10 +32,10 @@ describe('wallpaper session', () => {
 
   it('acquire 失败则 prepare 为 false，commit 为空', async () => {
     const session = createWallpaperSession({
-      acquire: async () => null,
+      acquire: async () => ({ ok: false, reason: 'empty' }),
       decode: async () => {},
     });
-    expect(await session.prepare(DEFAULT_SETTINGS)).toBe(false);
+    expect(await session.prepare(DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'empty' });
     expect(session.busy).toBe(false);
     expect(session.commit()).toBeNull();
   });
@@ -45,7 +45,7 @@ describe('wallpaper session', () => {
     const session = createWallpaperSession({
       acquire: async () => {
         calls += 1;
-        return item('x');
+        return { ok: true, item: item('x') };
       },
       decode: async () => {},
     });
@@ -61,7 +61,7 @@ describe('wallpaper session', () => {
   it('ensure：日更会 beforeDaily 再换图', async () => {
     let cleared = 0;
     const session = createWallpaperSession({
-      acquire: async () => item('n'),
+      acquire: async () => ({ ok: true, item: item('n') }),
       decode: async () => {},
       beforeDaily: () => {
         cleared += 1;

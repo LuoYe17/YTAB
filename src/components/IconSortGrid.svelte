@@ -2,11 +2,15 @@
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
   import type { GridItem } from '../lib/types';
+  import { displayAppIcon } from '../lib/appIcons';
   import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import {
+    cellHit,
     hitEdgeRelative,
+    insertIndexForDropBand,
     insertIndexFromHit,
     normalizedInRect,
+    readGridMetrics,
   } from '../lib/gridInsertGeometry';
   import GridTile from './GridTile.svelte';
 
@@ -20,6 +24,7 @@
     onDragOutcome,
     onGridContextMenu,
     outsideRoot = null,
+    hitRoot = null,
   }: {
     items: GridItem[];
     /** false = 仅换位（文件夹内部） */
@@ -32,6 +37,8 @@
     onGridContextMenu?: (e: MouseEvent) => void;
     /** 指针拖出此元素外并停住 → 仅视觉关窗，拖拽继续跟手 */
     outsideRoot?: HTMLElement | null;
+    /** 比网格更宽的落点带；起始页为 grid-slot，文件夹为面板 */
+    hitRoot?: HTMLElement | null;
   } = $props();
 
   const flipMs = 220;
@@ -63,6 +70,7 @@
   let lastInsertKey = '';
   let orderAtDragStart: string[] = [];
   let flipCooldownUntil = 0;
+  let gridEl = $state<HTMLElement | null>(null);
 
   $effect(() => {
     if (!activeId) {
@@ -133,22 +141,6 @@
     }, MERGE_DWELL_MS);
   }
 
-  function insertIndexFor(targetId: string, clientX: number, clientY: number): number | null {
-    const el = document.querySelector<HTMLElement>(`[data-tile-id="${CSS.escape(targetId)}"]`);
-    if (!el) return null;
-    const targetIndex = localItems.findIndex((i) => i.id === targetId);
-    if (targetIndex < 0) return null;
-    const { nx, ny } = normalizedInRect(clientX, clientY, el.getBoundingClientRect());
-    return insertIndexFromHit(targetIndex, hitEdgeRelative(nx, ny), 'skip');
-  }
-
-  function isCenterHit(targetId: string, clientX: number, clientY: number): boolean {
-    const el = document.querySelector<HTMLElement>(`[data-tile-id="${CSS.escape(targetId)}"]`);
-    if (!el) return false;
-    const { nx, ny } = normalizedInRect(clientX, clientY, el.getBoundingClientRect());
-    return hitEdgeRelative(nx, ny) === 'center';
-  }
-
   function insertBeforeIndex(sourceId: string, insertAt: number): boolean {
     const from = localItems.findIndex((i) => i.id === sourceId);
     if (from < 0) return false;
@@ -163,6 +155,34 @@
     localItems = next;
     orderDirty = true;
     return true;
+  }
+
+  function scheduleInsert(sourceId: string, targetKey: string, insertAt: number) {
+    const key = `${sourceId}:${targetKey}:${insertAt}`;
+    if (key === lastInsertKey) {
+      clearInsertPending();
+      return;
+    }
+    if (
+      pendingInsert &&
+      pendingInsert.sourceId === sourceId &&
+      pendingInsert.targetId === targetKey &&
+      pendingInsert.insertAt === insertAt &&
+      insertTimer
+    ) {
+      return;
+    }
+    clearInsertPending();
+    pendingInsert = { sourceId, targetId: targetKey, insertAt };
+    insertTimer = setTimeout(() => {
+      const job = pendingInsert;
+      insertTimer = null;
+      pendingInsert = null;
+      if (!job || job.sourceId !== activeId) return;
+      if (insertBeforeIndex(job.sourceId, job.insertAt)) {
+        lastInsertKey = `${job.sourceId}:${job.targetId}:${job.insertAt}`;
+      }
+    }, INSERT_DWELL_MS);
   }
 
   function coordsOf(event: {
@@ -320,11 +340,70 @@
     if (tryPageEdge()) return;
 
     const sourceId = activeId;
+    if (!sourceId) {
+      clearDwell();
+      clearInsertPending();
+      return;
+    }
+
+    const { x, y } = pointer;
+    const m = gridEl ? readGridMetrics(gridEl) : null;
+    if (m) {
+      const cell = cellHit(x, y, m);
+      if (cell && cell.index < localItems.length) {
+        const targetId = localItems[cell.index]?.id ?? null;
+        if (!targetId || sourceId === targetId) {
+          clearDwell();
+          clearInsertPending();
+          return;
+        }
+        const source = localItems.find((i) => i.id === sourceId);
+        const target = localItems.find((i) => i.id === targetId);
+        if (!source || !target) return;
+        if (canMerge(source, target) && hitEdgeRelative(cell.nx, cell.ny) === 'center') {
+          clearInsertPending();
+          startDwell(sourceId, targetId);
+          return;
+        }
+        clearDwell();
+        const insertAt = insertIndexFromHit(cell.index, hitEdgeRelative(cell.nx, cell.ny), 'skip');
+        if (insertAt == null) {
+          clearInsertPending();
+          return;
+        }
+        scheduleInsert(sourceId, targetId, insertAt);
+        return;
+      }
+      const root = hitRoot ?? outsideRoot ?? gridEl;
+      if (!root) {
+        clearDwell();
+        clearInsertPending();
+        return;
+      }
+      const br = root.getBoundingClientRect();
+      const at = insertIndexForDropBand(
+        x,
+        y,
+        m,
+        localItems.length,
+        'skip',
+        { left: br.left, top: br.top, right: br.right, bottom: br.bottom },
+      );
+      if (at == null) {
+        clearDwell();
+        clearInsertPending();
+        return;
+      }
+      clearDwell();
+      scheduleInsert(sourceId, at === 0 ? '__start' : '__end', at);
+      return;
+    }
+
     const targetEl = document.elementFromPoint(pointer.x, pointer.y);
     const tile = targetEl?.closest?.('[data-tile-id]') as HTMLElement | null;
     const targetId = tile?.dataset.tileId ?? null;
 
-    if (!sourceId || !targetId || sourceId === targetId) {
+    if (!tile || !targetId || sourceId === targetId) {
       clearDwell();
       clearInsertPending();
       return;
@@ -334,47 +413,24 @@
     const target = localItems.find((i) => i.id === targetId);
     if (!source || !target) return;
 
-    const { x, y } = pointer;
-    if (canMerge(source, target) && isCenterHit(targetId, x, y)) {
+    const { nx, ny } = normalizedInRect(x, y, tile.getBoundingClientRect());
+    if (canMerge(source, target) && hitEdgeRelative(nx, ny) === 'center') {
       clearInsertPending();
       startDwell(sourceId, targetId);
       return;
     }
 
     clearDwell();
-    const insertAt = insertIndexFor(targetId, x, y);
+    const insertAt = insertIndexFromHit(
+      localItems.findIndex((i) => i.id === targetId),
+      hitEdgeRelative(nx, ny),
+      'skip',
+    );
     if (insertAt == null) {
       clearInsertPending();
       return;
     }
-
-    const key = `${sourceId}:${targetId}:${insertAt}`;
-    if (key === lastInsertKey) {
-      clearInsertPending();
-      return;
-    }
-
-    if (
-      pendingInsert &&
-      pendingInsert.sourceId === sourceId &&
-      pendingInsert.targetId === targetId &&
-      pendingInsert.insertAt === insertAt &&
-      insertTimer
-    ) {
-      return;
-    }
-
-    clearInsertPending();
-    pendingInsert = { sourceId, targetId, insertAt };
-    insertTimer = setTimeout(() => {
-      const job = pendingInsert;
-      insertTimer = null;
-      pendingInsert = null;
-      if (!job || job.sourceId !== activeId) return;
-      if (insertBeforeIndex(job.sourceId, job.insertAt)) {
-        lastInsertKey = `${job.sourceId}:${job.targetId}:${job.insertAt}`;
-      }
-    }, INSERT_DWELL_MS);
+    scheduleInsert(sourceId, targetId, insertAt);
   }
 
   function onDragEnd(event: { canceled?: boolean }) {
@@ -449,8 +505,10 @@
 <DragDropProvider {onDragStart} {onDragMove} {onDragOver} {onDragEnd}>
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
+    bind:this={gridEl}
     class="grid"
     class:compact
+    data-ytab-grid={compact ? 'folder' : 'page'}
     role="presentation"
     oncontextmenu={onGridContextMenu}
   >
@@ -476,7 +534,7 @@
             <div class="folder-preview">
               {#each Array.from({ length: 4 }, (_, i) => a.children[i] ?? null) as child}
                 {#if child?.icon}
-                  <img src={child.icon} alt="" />
+                  <img src={displayAppIcon(child.url, child.icon)} alt="" />
                 {:else if child}
                   <span class="ph"></span>
                 {:else}
@@ -484,8 +542,8 @@
                 {/if}
               {/each}
             </div>
-          {:else if a.icon}
-            <img src={a.icon} alt="" />
+          {:else if a.kind === 'app' && displayAppIcon(a.url, a.icon)}
+            <img src={displayAppIcon(a.url, a.icon)} alt="" />
           {:else}
             <span class="ph">{a.name.slice(0, 1)}</span>
           {/if}
@@ -540,10 +598,11 @@
     width: 80px;
   }
   .overlay-tile .icon {
+    position: relative;
     width: 64px;
     height: 64px;
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.14);
+    background: transparent;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     display: grid;
     place-items: center;
@@ -557,10 +616,13 @@
   .overlay-tile .icon.folder {
     background: rgba(255, 255, 255, 0.2);
   }
-  .overlay-tile .icon img {
+  .overlay-tile .icon > img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
+    display: block;
   }
   .overlay-tile .folder-preview {
     display: grid;

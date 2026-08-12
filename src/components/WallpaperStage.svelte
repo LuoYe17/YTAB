@@ -18,7 +18,9 @@
     const next = url;
     if (!next) return;
     const my = ++gen;
-    chain = chain.then(() => crossfadeTo(next, my));
+    chain = chain.then(() => crossfadeTo(next, my)).catch(() => {
+      /* 解码失败保持当前层 */
+    });
   });
 
   async function crossfadeTo(next: string, my: number) {
@@ -50,10 +52,10 @@
   }
 
   function decodeUrl(src: string): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve();
-      img.onerror = () => resolve();
+      img.onerror = () => reject(new Error('wallpaper decode failed'));
       img.src = src;
     });
   }

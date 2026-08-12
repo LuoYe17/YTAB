@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createDraggable, createDroppable } from '@dnd-kit/svelte';
+  import { bundledIconUrl, displayAppIcon } from '../lib/appIcons';
   import type { GridItem } from '../lib/types';
 
   let {
@@ -33,6 +34,19 @@
       return { kind: item.kind, name: item.name };
     },
   });
+
+  const iconSrc = $derived(item.kind === 'app' ? displayAppIcon(item.url, item.icon) : '');
+  const showIcon = $derived(
+    !!iconSrc &&
+      !iconSrc.startsWith('idb:') &&
+      !iconSrc.startsWith('/') &&
+      !iconSrc.startsWith('chrome:'),
+  );
+  let imgFailed = $state(false);
+  $effect(() => {
+    void iconSrc;
+    imgFailed = false;
+  });
 </script>
 
 <button
@@ -51,7 +65,7 @@
       <div class="folder-preview">
         {#each Array.from({ length: 4 }, (_, i) => item.children[i] ?? null) as child}
           {#if child?.icon}
-            <img src={child.icon} alt="" draggable="false" />
+            <img src={displayAppIcon(child.url, child.icon)} alt="" draggable="false" />
           {:else if child}
             <span class="ph"></span>
           {:else}
@@ -63,8 +77,22 @@
       <div class="merge-preview" aria-hidden="true">
         <span></span><span></span><span></span><span></span>
       </div>
-    {:else if item.icon}
-      <img src={item.icon} alt="" draggable="false" />
+    {:else if item.kind === 'app' && showIcon && !imgFailed}
+      <img
+        src={iconSrc}
+        alt=""
+        draggable="false"
+        onerror={(e) => {
+          const fb = bundledIconUrl(item.url);
+          const el = e.currentTarget as HTMLImageElement;
+          if (fb && el.dataset.fb !== '1') {
+            el.dataset.fb = '1';
+            el.src = fb;
+          } else {
+            imgFailed = true;
+          }
+        }}
+      />
     {:else}
       <span class="ph">{item.name.slice(0, 1)}</span>
     {/if}
@@ -94,10 +122,11 @@
     opacity: 0.35;
   }
   .icon {
+    position: relative;
     width: 64px;
     height: 64px;
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.14);
+    background: transparent;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
     display: grid;
     place-items: center;
@@ -106,10 +135,13 @@
       transform 0.18s ease,
       box-shadow 0.18s ease;
   }
-  .icon img {
+  .icon > img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
+    display: block;
     pointer-events: none;
     -webkit-user-drag: none;
     user-select: none;

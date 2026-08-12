@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { fade, scale } from 'svelte/transition';
   import type { AppItem } from '../lib/types';
-  import { createAppFromUrl, faviconUrlFor, hostnameFallback, normalizeUrl } from '../lib/defaults';
+  import { createAppFromUrl, hostnameFallback, normalizeUrl } from '../lib/defaults';
+  import { resolveAppIcon } from '../lib/appIcons';
 
   let {
     initial = null,
@@ -19,26 +21,44 @@
   let name = $state(initial?.name ?? '');
   /* svelte-ignore state_referenced_locally */
   let icon = $state(initial?.icon ?? '');
-  let busy = $state(false);
+  let fetching = $state(false);
+  let saving = $state(false);
+  let autofillJob: Promise<void> | null = null;
 
   async function autofill() {
     const normalized = normalizeUrl(url);
     url = normalized;
     if (!name.trim()) name = hostnameFallback(normalized);
-    if (!icon.trim()) icon = faviconUrlFor(normalized);
-    busy = true;
-    try {
-      // Best-effort: page title via fetch (may fail CORS; favicon still works)
-      const res = await fetch(normalized, { method: 'GET' });
-      if (res.ok) {
-        const html = await res.text();
-        const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-        if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
+    fetching = true;
+    const job = (async () => {
+      const signal = AbortSignal.timeout(8000);
+      try {
+        if (!icon.trim()) {
+          const resolved = await Promise.race([
+            resolveAppIcon(normalized),
+            new Promise<string>((r) => {
+              signal.addEventListener('abort', () => r(''), { once: true });
+            }),
+          ]);
+          if (!icon.trim()) icon = resolved;
+        }
+        // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
+        const res = await fetch(normalized, { method: 'GET', signal });
+        if (res.ok) {
+          const html = await res.text();
+          const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+          if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
+        }
+      } catch {
+        // keep hostname / icon fallbacks
       }
-    } catch {
-      // keep hostname / favicon fallbacks
+    })();
+    autofillJob = job;
+    try {
+      await job;
     } finally {
-      busy = false;
+      fetching = false;
+      if (autofillJob === job) autofillJob = null;
     }
   }
 
@@ -62,18 +82,28 @@
     reader.readAsDataURL(file);
   }
 
-  function submit(e: Event) {
+  async function submit(e: Event) {
     e.preventDefault();
-    if (!url.trim()) return;
-    const base = initial
-      ? { ...initial, url: normalizeUrl(url), name: name.trim() || hostnameFallback(url), icon: icon || faviconUrlFor(url) }
-      : createAppFromUrl(url, name, icon);
-    onSave(base);
+    if (!url.trim() || saving) return;
+    if (autofillJob) await autofillJob;
+    const normalized = normalizeUrl(url);
+    saving = true;
+    try {
+      let nextIcon = icon.trim();
+      if (!nextIcon) nextIcon = await resolveAppIcon(normalized);
+      const nextName = name.trim() || hostnameFallback(normalized);
+      const base = initial
+        ? { ...initial, url: normalized, name: nextName, icon: nextIcon }
+        : createAppFromUrl(normalized, nextName, nextIcon);
+      onSave(base);
+    } finally {
+      saving = false;
+    }
   }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true">
-  <form class="card" onsubmit={submit}>
+<div class="overlay" role="dialog" aria-modal="true" transition:fade={{ duration: 160 }}>
+  <form class="card" onsubmit={submit} transition:scale={{ duration: 200, start: 0.96 }}>
     <h2>{initial ? '编辑 App' : '添加 App'}</h2>
     <label>
       网址
@@ -96,7 +126,7 @@
     {/if}
     <div class="row">
       <button type="button" class="ghost" onclick={onCancel}>取消</button>
-      <button type="submit" disabled={busy}>{busy ? '获取中…' : '保存'}</button>
+      <button type="submit" disabled={saving}>{fetching || saving ? '获取中…' : '保存'}</button>
     </div>
   </form>
 </div>
@@ -112,14 +142,15 @@
   }
   .card {
     width: min(400px, 92vw);
-    background: rgba(28, 28, 30, 0.96);
+    background: rgba(28, 28, 32, 0.55);
+    backdrop-filter: blur(24px) saturate(1.2);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     color: #f5f5f7;
     border-radius: 12px;
     padding: 1.2rem;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
-    border: 1px solid rgba(255, 255, 255, 0.08);
   }
   h2 {
     margin: 0 0 0.25rem;

@@ -1,6 +1,7 @@
 /** 壁纸：Wallhaven 拉取、内存预取池、换图会话。一次成图；上屏与 persist 由调用方负责。 */
 
 import type { Settings, WallpaperState } from './types';
+import type { WallpaperFailReason } from './wallpaperFail';
 
 const POOL_SIZE = 3;
 const MAX_DISPLAY_WIDTH = 2560;
@@ -116,7 +117,7 @@ async function searchHits(settings: Settings): Promise<WallhavenSearchHit[]> {
   }
 
   const res = await fetch(`https://wallhaven.cc/api/v1/search?${params}`);
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`wallhaven ${res.status}`);
   const data = (await res.json()) as { data?: WallhavenSearchHit[] };
   return (data.data ?? []).filter((h) => {
     if (!h.path) return false;
@@ -126,28 +127,46 @@ async function searchHits(settings: Settings): Promise<WallhavenSearchHit[]> {
   });
 }
 
-async function pickHit(settings: Settings): Promise<WallhavenSearchHit | null> {
+async function pickHit(
+  settings: Settings,
+): Promise<{ hit: WallhavenSearchHit } | { fail: WallpaperFailReason }> {
+  let gotOkEmpty = false;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const hits = await searchHits(settings);
-    if (hits.length) return hits[Math.floor(Math.random() * hits.length)] ?? hits[0]!;
+    try {
+      const hits = await searchHits(settings);
+      if (hits.length) {
+        const hit = hits[Math.floor(Math.random() * hits.length)] ?? hits[0]!;
+        return { hit };
+      }
+      gotOkEmpty = true;
+    } catch {
+      /* 网络/限额；若曾成功搜到零张则更像筛选过严 */
+    }
   }
-  return null;
+  return { fail: gotOkEmpty ? 'empty' : 'network' };
 }
+
+export type WallpaperAcquireResult =
+  | { ok: true; item: WallpaperItem }
+  | { ok: false; reason: WallpaperFailReason };
 
 export async function fetchRandomWallpaper(
   settings: Settings,
-): Promise<WallpaperItem | null> {
-  const hit = await pickHit(settings);
-  if (!hit) return null;
+): Promise<WallpaperAcquireResult> {
+  const picked = await pickHit(settings);
+  if ('fail' in picked) return { ok: false, reason: picked.fail };
   try {
-    const imageUrl = await toDisplayDataUrl(hit.path);
+    const imageUrl = await toDisplayDataUrl(picked.hit.path);
     return {
-      imageUrl,
-      wallhavenId: hit.id,
-      fetchedOn: todayLocal(),
+      ok: true,
+      item: {
+        imageUrl,
+        wallhavenId: picked.hit.id,
+        fetchedOn: todayLocal(),
+      },
     };
   } catch {
-    return null;
+    return { ok: false, reason: 'network' };
   }
 }
 
@@ -203,12 +222,12 @@ class WallpaperPool {
       while (this.items.length < target && guard < target * 4) {
         if (this.epoch !== epochAtStart) return;
         guard++;
-        const item = await fetchRandomWallpaper(settings);
+        const got = await fetchRandomWallpaper(settings);
         if (this.epoch !== epochAtStart) return;
-        if (!item) break;
-        if (this.seenIds.has(item.wallhavenId)) continue;
-        this.seenIds.add(item.wallhavenId);
-        this.items.push(item);
+        if (!got.ok) break;
+        if (this.seenIds.has(got.item.wallhavenId)) continue;
+        this.seenIds.add(got.item.wallhavenId);
+        this.items.push(got.item);
       }
     })().finally(() => {
       this.filling = null;
@@ -221,7 +240,9 @@ export const wallpaperPool = new WallpaperPool();
 
 export function schedulePoolFill(settings: Settings): void {
   const run = () => {
-    void wallpaperPool.fill(settings, POOL_SIZE);
+    void wallpaperPool.fill(settings, POOL_SIZE).catch(() => {
+      /* 预取失败不挡起始页 */
+    });
   };
   if (typeof requestIdleCallback === 'function') {
     requestIdleCallback(() => run(), { timeout: 4000 });
@@ -235,8 +256,12 @@ export type WallpaperEnsureResult =
   | { kind: 'switched'; item: WallpaperItem }
   | { kind: 'failed' };
 
+export type WallpaperPrepareResult =
+  | { ok: true }
+  | { ok: false; reason: WallpaperFailReason | 'busy' };
+
 export type WallpaperSessionDeps = {
-  acquire: (settings: Settings) => Promise<WallpaperItem | null>;
+  acquire: (settings: Settings) => Promise<WallpaperAcquireResult>;
   decode: (src: string) => Promise<void>;
   /** 日更前丢掉旧池，避免过期过滤条件的预取图。 */
   beforeDaily?: () => void;
@@ -250,22 +275,22 @@ export function createWallpaperSession(deps: WallpaperSessionDeps) {
   let busy = false;
   let pending: WallpaperItem | null = null;
 
-  async function prepare(settings: Settings): Promise<boolean> {
-    if (busy) return false;
+  async function prepare(settings: Settings): Promise<WallpaperPrepareResult> {
+    if (busy) return { ok: false, reason: 'busy' };
     busy = true;
     pending = null;
     try {
-      const item = await deps.acquire(settings);
-      if (!item) {
+      const got = await deps.acquire(settings);
+      if (!got.ok) {
         busy = false;
-        return false;
+        return { ok: false, reason: got.reason };
       }
-      await deps.decode(item.imageUrl);
-      pending = item;
-      return true;
+      await deps.decode(got.item.imageUrl);
+      pending = got.item;
+      return { ok: true };
     } catch {
       busy = false;
-      return false;
+      return { ok: false, reason: 'network' };
     }
   }
 
@@ -278,8 +303,8 @@ export function createWallpaperSession(deps: WallpaperSessionDeps) {
 
   /** 无 UI 路径：准备 + 提交一次做完。 */
   async function refresh(settings: Settings): Promise<WallpaperItem | null> {
-    const ok = await prepare(settings);
-    if (!ok) return null;
+    const prepared = await prepare(settings);
+    if (!prepared.ok) return null;
     return commit();
   }
 
@@ -314,9 +339,9 @@ function decodeWallpaperImage(src: string): Promise<void> {
   });
 }
 
-function acquireFromPoolOrFetch(settings: Settings): Promise<WallpaperItem | null> {
+function acquireFromPoolOrFetch(settings: Settings): Promise<WallpaperAcquireResult> {
   const pooled = wallpaperPool.take();
-  return pooled ? Promise.resolve(pooled) : fetchRandomWallpaper(settings);
+  return pooled ? Promise.resolve({ ok: true, item: pooled }) : fetchRandomWallpaper(settings);
 }
 
 /** 起始页用的换图会话：取池或拉取、解码；上屏与 persist 仍由 App 做。 */

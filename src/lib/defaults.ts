@@ -1,4 +1,5 @@
 import type { AppItem } from './types';
+import { resolveAppIcon } from './appIcons';
 
 /** Author default Apps (ADR-0009). Icons filled at runtime via favicon helper. */
 export const AUTHOR_DEFAULT_APPS: Omit<AppItem, 'id' | 'kind' | 'icon'>[] = [
@@ -59,18 +60,9 @@ export function buildAuthorDefaultApps(): AppItem[] {
   return AUTHOR_DEFAULT_APPS.map((a) => createAppFromUrl(a.url, a.name));
 }
 
-/** Fetch favicon into a data URL so the grid does not wait on the home screen. */
+/** Fetch the best available icon into a data URL so the grid does not wait on the home screen. */
 export async function cacheIconAsDataUrl(siteUrl: string): Promise<string> {
-  const remote = faviconUrlFor(siteUrl);
-  if (!remote) return '';
-  try {
-    const res = await fetch(remote);
-    if (!res.ok) return remote;
-    const blob = await res.blob();
-    return await blobToDataUrl(blob);
-  } catch {
-    return remote;
-  }
+  return resolveAppIcon(siteUrl);
 }
 
 export async function buildAuthorDefaultAppsCached(): Promise<AppItem[]> {
@@ -80,13 +72,4 @@ export async function buildAuthorDefaultAppsCached(): Promise<AppItem[]> {
       return createAppFromUrl(a.url, a.name, icon);
     }),
   );
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
 }

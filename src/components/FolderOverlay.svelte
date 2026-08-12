@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fade, scale } from 'svelte/transition';
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
   import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import IconSortGrid from './IconSortGrid.svelte';
@@ -64,6 +65,7 @@
   class:dismissed={shellDismissed}
   onclick={shellDismissed ? undefined : onClose}
   role="presentation"
+  transition:fade={{ duration: 180 }}
 >
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
@@ -73,6 +75,7 @@
     role="dialog"
     aria-modal="true"
     tabindex="-1"
+    transition:scale={{ duration: 200, start: 0.96 }}
   >
     {#if editing}
       <input
@@ -89,6 +92,7 @@
       enableMerge={false}
       compact={true}
       outsideRoot={panelEl}
+      hitRoot={panelEl}
       {onActivate}
       {onDragOutcome}
     />
@@ -121,7 +125,8 @@
     width: min(480px, 92vw);
     max-height: 70vh;
     overflow: auto;
-    background: rgba(40, 40, 42, 0.88);
+    background: rgba(40, 40, 42, 0.55);
+    backdrop-filter: blur(22px) saturate(1.2);
     border-radius: 18px;
     padding: 1.1rem 1rem 1.25rem;
     border: 1px solid rgba(255, 255, 255, 0.1);

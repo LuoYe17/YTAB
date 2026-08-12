@@ -7,6 +7,7 @@
   import FirstRun from '../../components/FirstRun.svelte';
   import AddAppDialog from '../../components/AddAppDialog.svelte';
   import SettingsModal from '../../components/SettingsModal.svelte';
+  import WallpaperRefreshControl from '../../components/WallpaperRefreshControl.svelte';
   import FolderOverlay from '../../components/FolderOverlay.svelte';
   import WallpaperStage from '../../components/WallpaperStage.svelte';
   import {
@@ -27,12 +28,12 @@
     type AppGridView,
   } from '../../lib/appGrid';
   import {
-    hitEdgeRelative,
-    insertIndexFromHit,
-    normalizedInRect,
+    insertIndexForDropBand,
+    readGridMetrics,
   } from '../../lib/gridInsertGeometry';
   import { fetchHitokoto } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
+  import { applyBundledIcons, bundledIconDataUrls } from '../../lib/appIcons';
   import { downloadBlob, exportYtab, importYtab } from '../../lib/backup';
   import {
     createEmptyState,
@@ -49,25 +50,48 @@
     wallpaperPool,
     wallpaperSession,
     type WallpaperItem,
+    type WallpaperPrepareResult,
   } from '../../lib/wallpaper';
+  import type { WallpaperFailFocus } from '../../lib/wallpaperFail';
 
   let ready = $state(false);
+  let loadFailed = $state(false);
   let ytab = $state(createEmptyState());
   let pageIndex = $state(0);
   let settingsOpen = $state(false);
+  let settingsHighlight = $state<WallpaperFailFocus | null>(null);
   let addOpen = $state(false);
   let openFolder = $state<FolderItem | null>(null);
   /** Esc / 取消跨页拖时整表回滚 */
   let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
   /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
+  let mainEl = $state<HTMLElement | null>(null);
 
   onMount(() => {
     void bootstrap();
   });
 
   async function bootstrap() {
-    ytab = await loadState();
+    try {
+      ytab = await loadState();
+    } catch {
+      loadFailed = true;
+      ready = true;
+      return;
+    }
+    if (!localStorage.getItem('ytab:icon-bundle-v8')) {
+      try {
+        const bundled = await bundledIconDataUrls();
+        if (bundled.size > 0) {
+          ytab = applyBundledIcons(ytab, bundled);
+          await saveState(ytab);
+        }
+      } catch {
+        /* 内置图升级失败不挡起始页 */
+      }
+      localStorage.setItem('ytab:icon-bundle-v8', '1');
+    }
     displayUrl = ytab.wallpaper.imageUrl;
     ready = true;
     if (!ytab.onboardingDone) return;
@@ -75,6 +99,12 @@
     await ensureWallpaper(false);
     wallpaperPool.rememberCurrent(ytab.wallpaper.wallhavenId);
     schedulePoolFill(ytab.settings);
+  }
+
+  async function retryLoad() {
+    loadFailed = false;
+    ready = false;
+    await bootstrap();
   }
 
   async function persist(updater: (prev: YtabState) => YtabState) {
@@ -114,7 +144,7 @@
   }
 
   /** 准备阶段：只拉取/解码，不上屏。 */
-  function prepareWallpaperRefresh(): Promise<boolean> {
+  function prepareWallpaperRefresh(): Promise<WallpaperPrepareResult> {
     return wallpaperSession.prepare(ytab.settings);
   }
 
@@ -250,23 +280,29 @@
     await applyGrid(gridEjectFromFolderAt(gridView(), folderId, appId, insertAt));
   }
 
-  /** 主网格落点：边缘插前/后；中心则插在目标后；未命中则追加（DOM 解析 + 共享几何） */
+  /** 主网格落点：格子 + 左壁纸→首位 + 下/右→末尾。 */
   function insertIndexOnPage(
     page: GridItem[],
     clientX: number,
     clientY: number,
     excludeId: string,
   ): number {
-    const el = document.elementFromPoint(clientX, clientY);
-    const tile = el?.closest?.('[data-tile-id]') as HTMLElement | null;
-    const targetId = tile?.dataset.tileId;
-    if (!targetId || targetId === excludeId) return page.length;
-
-    const targetIndex = page.findIndex((i) => i.id === targetId);
-    if (targetIndex < 0) return page.length;
-
-    const { nx, ny } = normalizedInRect(clientX, clientY, tile.getBoundingClientRect());
-    return insertIndexFromHit(targetIndex, hitEdgeRelative(nx, ny), 'after') ?? page.length;
+    const grid = document.querySelector<HTMLElement>('[data-ytab-grid="page"]');
+    const slot = document.querySelector<HTMLElement>('[data-ytab-drop-band]');
+    const m = grid ? readGridMetrics(grid) : null;
+    const host = slot ?? grid;
+    if (m && host) {
+      const occupied = page.filter((i) => i.id !== excludeId).length;
+      const br = host.getBoundingClientRect();
+      const at = insertIndexForDropBand(clientX, clientY, m, occupied, 'after', {
+        left: br.left,
+        top: br.top,
+        right: br.right,
+        bottom: br.bottom,
+      });
+      if (at != null) return at;
+    }
+    return page.length;
   }
 
   async function renameFolder(folderId: string, name: string) {
@@ -290,6 +326,7 @@
     await persist(() => ({ ...next, onboardingDone: true }));
     displayUrl = next.wallpaper.imageUrl;
     settingsOpen = false;
+    settingsHighlight = null;
     pageIndex = 0;
     schedulePoolFill(next.settings);
   }
@@ -309,6 +346,7 @@
     await persist(() => createEmptyState());
     displayUrl = '';
     settingsOpen = false;
+    settingsHighlight = null;
     pageIndex = 0;
     openFolder = null;
     addOpen = false;
@@ -316,35 +354,55 @@
 </script>
 
 {#if ready}
+  {#if loadFailed}
+    <div class="page">
+      <div class="load-fail">
+        <p>读取本地数据失败了 (｡•́︿•̀｡)</p>
+        <button type="button" onclick={retryLoad}>重试</button>
+      </div>
+    </div>
+  {:else}
   <div class="page">
     <WallpaperStage url={displayUrl} />
     <div class="shade"></div>
-    <main>
+    <main bind:this={mainEl} data-ytab-drop-band>
       <Clock />
       <HitokotoLine text={ytab.hitokoto.text} from={ytab.hitokoto.from} />
       <SearchBox endpoint={ytab.settings.bingEndpoint} />
       {#if ytab.onboardingDone}
-        <AppGrid
-          items={currentPageItems()}
-          pageIndex={pageIndex}
-          pageCount={ytab.pages.length}
-          onOpenApp={openApp}
-          onOpenFolder={openFolderItem}
-          onPageChange={(i) => (pageIndex = i)}
-          onAdd={() => (addOpen = true)}
-          dnd={{
-            onMerge: mergeApps,
-            onDropIntoFolder: dropIntoFolder,
-            onReorderPage: reorderPage,
-            onPageFlip: pageFlipDuringDrag,
-            onDragSessionStart: onGridDragSessionStart,
-            onDragSessionCancel: onGridDragSessionCancel,
-          }}
-        />
+        <div class="grid-slot">
+          <AppGrid
+            items={currentPageItems()}
+            pageIndex={pageIndex}
+            pageCount={ytab.pages.length}
+            onOpenApp={openApp}
+            onOpenFolder={openFolderItem}
+            onPageChange={(i) => (pageIndex = i)}
+            onAdd={() => (addOpen = true)}
+            hitRoot={mainEl}
+            dnd={{
+              onMerge: mergeApps,
+              onDropIntoFolder: dropIntoFolder,
+              onReorderPage: reorderPage,
+              onPageFlip: pageFlipDuringDrag,
+              onDragSessionStart: onGridDragSessionStart,
+              onDragSessionCancel: onGridDragSessionCancel,
+            }}
+          />
+        </div>
       {/if}
     </main>
 
-    <button type="button" class="settings-btn" onclick={() => (settingsOpen = true)} title="设置" aria-label="设置">
+    <button
+      type="button"
+      class="ghost-btn settings-btn"
+      onclick={() => {
+        settingsHighlight = null;
+        settingsOpen = true;
+      }}
+      title="设置"
+      aria-label="设置"
+    >
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
         <path
           fill="currentColor"
@@ -352,6 +410,16 @@
         />
       </svg>
     </button>
+    {#if ytab.onboardingDone}
+      <WallpaperRefreshControl
+        onPrepare={prepareWallpaperRefresh}
+        onCommit={commitWallpaperRefresh}
+        onOpenSettings={(focus) => {
+          settingsHighlight = focus;
+          settingsOpen = true;
+        }}
+      />
+    {/if}
   </div>
 
   {#if !ytab.onboardingDone}
@@ -365,10 +433,12 @@
   {#if settingsOpen}
     <SettingsModal
       settings={ytab.settings}
-      onClose={() => (settingsOpen = false)}
+      highlight={settingsHighlight}
+      onClose={() => {
+        settingsOpen = false;
+        settingsHighlight = null;
+      }}
       onChange={onSettingsChange}
-      onPrepareWallpaper={prepareWallpaperRefresh}
-      onCommitWallpaper={commitWallpaperRefresh}
       onExport={onExportBackup}
       onImport={onImportBackup}
       onResetAll={onResetAll}
@@ -385,6 +455,7 @@
       onEjectAt={ejectFromFolderAt}
     />
   {/if}
+  {/if}
 {/if}
 
 <style>
@@ -393,6 +464,32 @@
     position: relative;
     background-color: #1a1b1e;
     color: #fff;
+  }
+  .load-fail {
+    min-height: 100vh;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 0.75rem;
+    position: relative;
+    z-index: 1;
+  }
+  .load-fail p {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.72);
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+  }
+  .load-fail button {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: #7ecbff;
+    cursor: pointer;
+    font: inherit;
+  }
+  .load-fail button:hover {
+    text-decoration: underline;
   }
   .shade {
     position: absolute;
@@ -408,27 +505,39 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 1.15rem;
-    padding: 2.5rem 1rem 4.5rem;
+    justify-content: flex-start;
+    gap: 0.75rem;
+    padding: 2.25rem 1rem 5rem;
     box-sizing: border-box;
   }
-  .settings-btn {
+  .grid-slot {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    padding-top: 0.35rem;
+  }
+  .ghost-btn {
     position: fixed;
-    left: 1rem;
-    bottom: 1rem;
     z-index: 5;
     width: 40px;
     height: 40px;
-    border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(0, 0, 0, 0.28);
-    color: rgba(255, 255, 255, 0.88);
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.38);
     display: grid;
     place-items: center;
     cursor: pointer;
+    transition: color 0.15s ease;
   }
-  .settings-btn:hover {
-    background: rgba(0, 0, 0, 0.4);
+  .ghost-btn:hover {
+    color: rgba(255, 255, 255, 0.92);
+  }
+  .settings-btn {
+    left: 1rem;
+    bottom: 1.1rem;
   }
 </style>

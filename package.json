@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@dnd-kit/svelte": "^0.5.0",
+    "favicon-pro": "^1.0.2",
     "jszip": "^3.10.1"
   }
 }

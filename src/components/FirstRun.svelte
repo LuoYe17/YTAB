@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { fade, scale } from 'svelte/transition';
   import {
     AUTHOR_DEFAULT_APPS,
     buildAuthorDefaultAppsCached,
     faviconUrlFor,
   } from '../lib/defaults';
+  import { bundledIconUrl } from '../lib/appIcons';
   import { fetchHitokoto } from '../lib/hitokoto';
   import type { AppItem, HitokotoState, Settings } from '../lib/types';
   import { fetchRandomWallpaper, type WallhavenFetchResult } from '../lib/wallpaper';
@@ -28,21 +30,29 @@
     if (phase !== 'idle') return;
     phase = 'scan';
     const started = Date.now();
+    try {
+      const [apps, hitokoto, wallpaper] = await Promise.all([
+        (selected === 'author'
+          ? buildAuthorDefaultAppsCached()
+          : Promise.resolve([] as AppItem[])
+        ).catch(() => [] as AppItem[]),
+        fetchHitokoto().catch(() => null),
+        fetchRandomWallpaper(settings)
+          .then((got) => (got.ok ? got.item : null))
+          .catch(() => null),
+      ]);
 
-    const [apps, hitokoto, wallpaper] = await Promise.all([
-      selected === 'author' ? buildAuthorDefaultAppsCached() : Promise.resolve([] as AppItem[]),
-      fetchHitokoto(),
-      fetchRandomWallpaper(settings),
-    ]);
+      // 至少播一会扫描动画，避免闪一下就没了
+      const minMs = 700;
+      const left = minMs - (Date.now() - started);
+      if (left > 0) await sleep(left);
 
-    // 至少播一会扫描动画，避免闪一下就没了
-    const minMs = 700;
-    const left = minMs - (Date.now() - started);
-    if (left > 0) await sleep(left);
-
-    phase = 'success';
-    await sleep(650);
-    onChoose({ mode: selected, apps, hitokoto, wallpaper });
+      phase = 'success';
+      await sleep(650);
+      onChoose({ mode: selected, apps, hitokoto, wallpaper });
+    } catch {
+      phase = 'idle';
+    }
   }
 
   function sleep(ms: number) {
@@ -55,8 +65,8 @@
   }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="fr-title">
-  <div class="sheet">
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="fr-title" transition:fade={{ duration: 160 }}>
+  <div class="sheet" transition:scale={{ duration: 200, start: 0.96 }}>
     <header class="head">
       <h1 id="fr-title">欢迎使用 YTAB</h1>
       <p class="sub">选择起始配置</p>
@@ -89,7 +99,7 @@
               <span class="tip-lead">一打开就有这些作者常用网站，您不喜欢以后随时能删、能改：</span>
               {#each AUTHOR_DEFAULT_APPS as site}
                 <span class="tip-row">
-                  <img src={faviconUrlFor(site.url)} alt="" width="14" height="14" />
+                  <img src={bundledIconUrl(site.url) || faviconUrlFor(site.url)} alt="" width="14" height="14" />
                   <span>{site.name}</span>
                 </span>
               {/each}

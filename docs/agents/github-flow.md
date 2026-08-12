@@ -46,4 +46,5 @@
 - 默认在 **`dev`** 上改代码与提交；用户说「提交 / push」且未指 `main` 时，对准 `dev`
 - 提交信息：`英文前缀:` + 中文说明（见上文）；不要省略前缀
 - **大改**：相关改动在同一短命分支上做完再 `gh pr create`（base=`dev`），然后 **停下**；把 PR URL 交给用户，**不要** `gh pr merge`。不要把可攒的切片拆成多条 PR。
+- CodeRabbit 默认不自动审；要审时在 PR 评论 `@coderabbitai review`（配置以默认分支 `main` 上的 `.coderabbit.yaml` 为准）
 - 发布进 `main`：仅当用户明确要求时开 `dev`→`main` 的 PR；同样 **不要** 自动合入

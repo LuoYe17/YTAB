@@ -358,12 +358,14 @@
           onOpenFolder={openFolderItem}
           onPageChange={(i) => (pageIndex = i)}
           onAdd={() => (addOpen = true)}
-          onMerge={mergeApps}
-          onDropIntoFolder={dropIntoFolder}
-          onReorderPage={reorderPage}
-          onPageFlip={pageFlipDuringDrag}
-          onDragSessionStart={onGridDragSessionStart}
-          onDragSessionCancel={onGridDragSessionCancel}
+          dnd={{
+            onMerge: mergeApps,
+            onDropIntoFolder: dropIntoFolder,
+            onReorderPage: reorderPage,
+            onPageFlip: pageFlipDuringDrag,
+            onDragSessionStart: onGridDragSessionStart,
+            onDragSessionCancel: onGridDragSessionCancel,
+          }}
         />
       {/if}
     </main>

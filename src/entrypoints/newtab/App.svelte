@@ -26,6 +26,11 @@
     type AppGridDragSnapshot,
     type AppGridView,
   } from '../../lib/appGrid';
+  import {
+    hitEdgeRelative,
+    insertIndexFromHit,
+    normalizedInRect,
+  } from '../../lib/gridInsertGeometry';
   import { fetchHitokoto } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
   import {
@@ -281,7 +286,7 @@
     await applyGrid(gridEjectFromFolderAt(gridView(), folderId, appId, insertAt));
   }
 
-  /** 主网格落点：落在某图标边缘则插前/后，否则追加到末尾（DOM，本轮不进 appGrid） */
+  /** 主网格落点：边缘插前/后；中心则插在目标后；未命中则追加（DOM 解析 + 共享几何） */
   function insertIndexOnPage(
     page: GridItem[],
     clientX: number,
@@ -296,19 +301,8 @@
     const targetIndex = page.findIndex((i) => i.id === targetId);
     if (targetIndex < 0) return page.length;
 
-    const rect = tile.getBoundingClientRect();
-    const nx = (clientX - rect.left) / Math.max(rect.width, 1);
-    const ny = (clientY - rect.top) / Math.max(rect.height, 1);
-    const dx = nx - 0.5;
-    const dy = ny - 0.5;
-    const EDGE_MIN = 0.18;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) < EDGE_MIN) {
-      return targetIndex + 1;
-    }
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      return dx < 0 ? targetIndex : targetIndex + 1;
-    }
-    return dy < 0 ? targetIndex : targetIndex + 1;
+    const { nx, ny } = normalizedInRect(clientX, clientY, tile.getBoundingClientRect());
+    return insertIndexFromHit(targetIndex, hitEdgeRelative(nx, ny), 'after') ?? page.length;
   }
 
   async function renameFolder(folderId: string, name: string) {

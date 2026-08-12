@@ -2,6 +2,11 @@
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
   import type { GridItem } from '../lib/types';
+  import {
+    hitEdgeRelative,
+    insertIndexFromHit,
+    normalizedInRect,
+  } from '../lib/gridInsertGeometry';
   import GridTile from './GridTile.svelte';
 
   let {
@@ -49,7 +54,6 @@
   const INSERT_DWELL_MS = 220;
   const OUTSIDE_DWELL_MS = 320;
   const CENTER = 0.38;
-  const EDGE_MIN = 0.18;
   const PAGE_EDGE_PX = 44;
   const PAGE_FLIP_DWELL_MS = 400;
   const PAGE_FLIP_COOLDOWN_MS = 650;
@@ -148,20 +152,10 @@
   function insertIndexFor(targetId: string, clientX: number, clientY: number): number | null {
     const el = document.querySelector<HTMLElement>(`[data-tile-id="${CSS.escape(targetId)}"]`);
     if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    const nx = (clientX - rect.left) / Math.max(rect.width, 1);
-    const ny = (clientY - rect.top) / Math.max(rect.height, 1);
     const targetIndex = localItems.findIndex((i) => i.id === targetId);
     if (targetIndex < 0) return null;
-
-    const dx = nx - 0.5;
-    const dy = ny - 0.5;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) < EDGE_MIN) return null;
-
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      return dx < 0 ? targetIndex : targetIndex + 1;
-    }
-    return dy < 0 ? targetIndex : targetIndex + 1;
+    const { nx, ny } = normalizedInRect(clientX, clientY, el.getBoundingClientRect());
+    return insertIndexFromHit(targetIndex, hitEdgeRelative(nx, ny), 'skip');
   }
 
   function isCenterHit(targetId: string, clientX: number, clientY: number): boolean {

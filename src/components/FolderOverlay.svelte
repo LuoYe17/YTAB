@@ -52,6 +52,7 @@
         onEjectAt(folder.id, outcome.itemId, outcome.clientX, outcome.clientY);
         break;
       default:
+        // 文件夹内不处理合文件夹 / 翻页 / 会话快照。
         break;
     }
   }

@@ -62,6 +62,7 @@
         dnd.onPageFlip(outcome.toPage, outcome.fromPageWithoutItem, outcome.item);
         break;
       default:
+        // 主网格不处理文件夹拖出（outsideDwell / outsideDrop）。
         break;
     }
   }

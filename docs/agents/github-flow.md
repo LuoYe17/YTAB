@@ -18,7 +18,16 @@
 3. **大改**：从 `dev` 开 `feat/…` / `fix/…` / `chore/…` → 开 PR（base=`dev`）→ **由维护者手动** **squash** 合入 `dev` → 删分支  
 4. **发布**：`dev` → 开 PR（base=`main`）→ **由维护者手动** **squash** 合入 `main`
 
-提交说明用 **中文**。合入 `main` / `dev` 的 PR 默认 **squash**。  
+提交说明用 **中文**，并加英文类型前缀（Conventional Commits 风格），例如：
+
+- `feat:` 新能力 / 用户可见行为
+- `fix:` 修 bug
+- `docs:` 文档、贡献指南、流程说明
+- `refactor:` 重构（行为不变或几乎不变）
+- `chore:` 脚手架、依赖、仓库门面、杂项
+
+示例：`docs: 约定 PR 由维护者手动合入，禁止 Agent 自动 merge。`  
+合入 `main` / `dev` 的 PR 默认 **squash**（squash 标题也尽量带前缀）。  
 **合入权在人**：Agent / 自动化 **不得** `gh pr merge`（或等价自动合入）；开好 PR、给链接即可，等维护者在 GitHub 上点合。
 
 ## 硬规则
@@ -33,5 +42,6 @@
 ## Agent
 
 - 默认在 **`dev`** 上改代码与提交；用户说「提交 / push」且未指 `main` 时，对准 `dev`
+- 提交信息：`英文前缀:` + 中文说明（见上文）；不要省略前缀
 - **大改**：push 短命分支后可 `gh pr create`（base=`dev`），然后 **停下**；把 PR URL 交给用户，**不要** `gh pr merge`
 - 发布进 `main`：仅当用户明确要求时开 `dev`→`main` 的 PR；同样 **不要** 自动合入

@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: zh-CN
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+
+  # 跳过噪声；根目录 README / CONTRIBUTING 等仍可审
+  path_filters:
+    - "!pnpm-lock.yaml"
+    - "!docs/**"
+    - "!.github/**"
+
+  path_instructions:
+    - path: "src/lib/appGrid.ts"
+      instructions: |
+        这是 App 网格的纯领域逻辑模块：必须保持无 DOM、无持久化、无副作用；
+        规则变化必须在 src/lib/appGrid.test.ts 有对应测试。
+    - path: "src/lib/storage.ts"
+      instructions: |
+        持久化分层：meta（chrome.storage）必须保持小体积，不得写入壁纸像素或 data URL 图标；
+        壁纸大图走 IndexedDB；写入链串行化，警惕数据丢失风险。
+    - path: "src/lib/types.ts"
+      instructions: "领域模型的唯一来源；字段或语义改动需与 CONTEXT.md 术语保持一致。"
+
+  auto_review:
+    base_branches:
+      - "dev"
+
+  tools:
+    shellcheck:
+      enabled: false

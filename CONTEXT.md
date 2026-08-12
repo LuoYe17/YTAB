@@ -21,7 +21,7 @@ _Avoid_：引导教程、onboarding 多步向导
 _Avoid_：系统推荐、热门站点（非个性化话术）
 
 **App 图标**：
-某个 App 的视觉标识。来源可以是：打开网址后自动抓取、图片 URL、或本地上传（png / jpg / svg / webp）。自动抓取失败时用占位图，名称回退为主机名，仍可再改。
+某个 App 的视觉标识。来源可以是：打开网址后自动抓取、图片 URL、或本地上传（png / jpg / svg / webp）。自动抓取失败时用占位图，名称回退为主机名，仍可再改。抓取或上传得到的像素缓存在 IndexedDB；chrome.storage 只留 http 地址或引用，以免配额把整包状态打挂。
 _Avoid_：favicon（实现细节）、logo
 
 **文件夹**：

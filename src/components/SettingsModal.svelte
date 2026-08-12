@@ -1,26 +1,25 @@
 <script lang="ts">
-  import type { Settings, YtabState } from '../lib/types';
-  import { downloadBlob, exportYtab, importYtab } from '../lib/backup';
+  import type { Settings } from '../lib/types';
 
   type Tab = 'general' | 'wallpaper' | 'search' | 'data' | 'about';
 
   let {
     settings,
-    getState,
     onClose,
     onChange,
     onPrepareWallpaper,
     onCommitWallpaper,
-    onImportState,
+    onExport,
+    onImport,
     onResetAll,
   }: {
     settings: Settings;
-    getState: () => YtabState;
     onClose: () => void;
     onChange: (next: Settings) => void;
     onPrepareWallpaper: () => boolean | Promise<boolean>;
     onCommitWallpaper: () => void | Promise<void>;
-    onImportState: (state: YtabState) => void;
+    onExport: (opts: { includeIcons: boolean; includeApiKey: boolean }) => void | Promise<void>;
+    onImport: (file: File) => void | Promise<void>;
     onResetAll: () => void;
   } = $props();
 
@@ -75,11 +74,10 @@
   async function handleExportClick() {
     exportBusy = true;
     try {
-      const blob = await exportYtab(getState(), {
+      await onExport({
         includeIcons,
         includeApiKey,
       });
-      downloadBlob(blob, `ytab-backup-${new Date().toISOString().slice(0, 10)}.ytab`);
     } finally {
       exportBusy = false;
     }
@@ -91,8 +89,7 @@
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const state = await importYtab(file);
-      onImportState(state);
+      await onImport(file);
     } catch (err) {
       importError = err instanceof Error ? err.message : '导入失败';
     }

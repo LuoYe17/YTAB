@@ -1,32 +1,22 @@
 <script lang="ts">
+  import GhostTip from './GhostTip.svelte';
   import type { WallpaperPrepareResult } from '../lib/wallpaper';
-  import { wallpaperFailHint, type WallpaperFailFocus, type WallpaperFailHint } from '../lib/wallpaperFail';
+  import { wallpaperFailHint, type WallpaperFailHint } from '../lib/wallpaperFail';
 
   let {
     onPrepare,
     onCommit,
-    onOpenSettings,
+    onFail,
   }: {
     onPrepare: () => Promise<WallpaperPrepareResult>;
     onCommit: () => void | Promise<void>;
-    onOpenSettings: (focus: WallpaperFailFocus) => void;
+    onFail: (hint: WallpaperFailHint) => void;
   } = $props();
 
   let phase = $state<'idle' | 'scan' | 'success' | 'error'>('idle');
-  let hint = $state<WallpaperFailHint | null>(null);
-  let hintTimer = 0;
-
-  function clearHintSoon() {
-    window.clearTimeout(hintTimer);
-    hintTimer = window.setTimeout(() => {
-      hint = null;
-    }, 4000);
-  }
 
   async function refresh() {
     if (phase !== 'idle') return;
-    hint = null;
-    window.clearTimeout(hintTimer);
     phase = 'scan';
     const started = Date.now();
     try {
@@ -41,45 +31,30 @@
         return;
       } else {
         phase = 'error';
-        hint = wallpaperFailHint(prepared.reason);
+        onFail(wallpaperFailHint(prepared.reason));
         await new Promise<void>((r) => setTimeout(r, 480));
-        clearHintSoon();
       }
     } catch {
       phase = 'error';
-      hint = wallpaperFailHint('network');
+      onFail(wallpaperFailHint('network'));
       await new Promise<void>((r) => setTimeout(r, 480));
-      clearHintSoon();
     } finally {
       phase = 'idle';
     }
   }
-
-  function onHintLink() {
-    if (!hint) return;
-    const focus = hint.focus;
-    hint = null;
-    window.clearTimeout(hintTimer);
-    onOpenSettings(focus);
-  }
 </script>
 
 <div class="wrap">
-  {#if hint}
-    <p class="hint" role="status">
-      {hint.before}<button type="button" class="jump" onclick={onHintLink}>{hint.link}</button>{hint.after}
-    </p>
-  {/if}
-  <button
-    type="button"
-    class="ghost"
-    class:busy={phase !== 'idle'}
-    disabled={phase !== 'idle'}
-    onclick={refresh}
-    title="换一张壁纸"
-    aria-label="换一张壁纸"
-    aria-live="polite"
-  >
+  <GhostTip label="换一张" placement="nw">
+    <button
+      type="button"
+      class="ghost"
+      class:busy={phase !== 'idle'}
+      disabled={phase !== 'idle'}
+      onclick={refresh}
+      aria-label="换一张"
+      aria-live="polite"
+    >
     <span class="idle" class:hide={phase !== 'idle'} aria-hidden={phase !== 'idle'}>
       <svg viewBox="0 0 24 24" width="22" height="22">
         <path
@@ -119,6 +94,7 @@
       </svg>
     </span>
   </button>
+  </GhostTip>
 </div>
 
 <style>
@@ -127,30 +103,8 @@
     right: 1rem;
     bottom: 1.1rem;
     z-index: 5;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.45rem;
-    max-width: min(320px, calc(100vw - 5.5rem));
-  }
-  .hint {
-    margin: 0;
-    text-align: right;
-    font-size: 0.78rem;
-    line-height: 1.45;
-    color: rgba(255, 255, 255, 0.88);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-  }
-  .jump {
-    appearance: none;
-    border: 0;
-    padding: 0;
-    background: none;
-    color: #7ecbff;
-    cursor: pointer;
-    font: inherit;
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
+    display: grid;
+    place-items: center;
   }
   .ghost {
     appearance: none;

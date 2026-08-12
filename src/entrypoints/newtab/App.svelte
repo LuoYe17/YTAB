@@ -10,6 +10,7 @@
   import WallpaperRefreshControl from '../../components/WallpaperRefreshControl.svelte';
   import FolderOverlay from '../../components/FolderOverlay.svelte';
   import WallpaperStage from '../../components/WallpaperStage.svelte';
+  import GhostTip from '../../components/GhostTip.svelte';
   import {
     addApp as gridAddApp,
     beginDragSession,
@@ -31,7 +32,7 @@
     insertIndexForDropBand,
     readGridMetrics,
   } from '../../lib/gridInsertGeometry';
-  import { fetchHitokoto } from '../../lib/hitokoto';
+  import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
   import { applyBundledIcons, bundledIconDataUrls } from '../../lib/appIcons';
   import { downloadBlob, exportYtab, importYtab } from '../../lib/backup';
@@ -53,6 +54,8 @@
     type WallpaperPrepareResult,
   } from '../../lib/wallpaper';
   import type { WallpaperFailFocus } from '../../lib/wallpaperFail';
+  import { plainNotice, showNotice } from '../../lib/notice';
+  import NoticeHost from '../../components/NoticeHost.svelte';
 
   let ready = $state(false);
   let loadFailed = $state(false);
@@ -67,6 +70,15 @@
   /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
   let mainEl = $state<HTMLElement | null>(null);
+  let settingsBtnEl = $state<HTMLButtonElement | null>(null);
+  let settingsOrigin = $state({ x: 40, y: 40 });
+
+  function openSettings(focus: WallpaperFailFocus | null = null) {
+    const r = settingsBtnEl?.getBoundingClientRect();
+    if (r) settingsOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    settingsHighlight = focus;
+    settingsOpen = true;
+  }
 
   onMount(() => {
     void bootstrap();
@@ -130,8 +142,15 @@
 
   async function refreshHitokoto() {
     const next = await fetchHitokoto();
-    if (!next) return;
-    await persist((prev) => ({ ...prev, hitokoto: next }));
+    if (!next.ok) return;
+    await persist((prev) => ({ ...prev, hitokoto: next.value }));
+  }
+
+  async function changeHitokoto(): Promise<HitokotoFetchResult> {
+    const next = await fetchHitokoto();
+    if (!next.ok) return next;
+    await persist((prev) => ({ ...prev, hitokoto: next.value }));
+    return next;
   }
 
   async function ensureWallpaper(force: boolean) {
@@ -350,6 +369,7 @@
     pageIndex = 0;
     openFolder = null;
     addOpen = false;
+    plainNotice('ok', '已重置');
   }
 </script>
 
@@ -367,7 +387,7 @@
     <div class="shade"></div>
     <main bind:this={mainEl} data-ytab-drop-band>
       <Clock />
-      <HitokotoLine text={ytab.hitokoto.text} from={ytab.hitokoto.from} />
+      <HitokotoLine text={ytab.hitokoto.text} from={ytab.hitokoto.from} onRefresh={changeHitokoto} />
       <SearchBox endpoint={ytab.settings.bingEndpoint} />
       {#if ytab.onboardingDone}
         <div class="grid-slot">
@@ -393,31 +413,36 @@
       {/if}
     </main>
 
-    <button
-      type="button"
-      class="ghost-btn settings-btn"
-      onclick={() => {
-        settingsHighlight = null;
-        settingsOpen = true;
-      }}
-      title="设置"
-      aria-label="设置"
-    >
+    <div class="settings-slot">
+      <GhostTip label="设置" placement="ne">
+        <button
+          bind:this={settingsBtnEl}
+          type="button"
+          class="ghost-btn"
+          onclick={() => openSettings()}
+          aria-label="设置"
+        >
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
         <path
           fill="currentColor"
           d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.2 7.2 0 0 0-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.55-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.65 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.77 14.5a.49.49 0 0 0-.12.61l1.92 3.32c.13.22.4.3.62.22l2.39-.96c.5.39 1.04.71 1.62.94l.36 2.54c.05.23.25.41.48.41h4c.24 0 .43-.17.48-.41l.36-2.54c.59-.23 1.13-.55 1.62-.94l2.39.96c.22.08.5 0 .62-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
         />
       </svg>
-    </button>
+        </button>
+      </GhostTip>
+    </div>
     {#if ytab.onboardingDone}
       <WallpaperRefreshControl
         onPrepare={prepareWallpaperRefresh}
         onCommit={commitWallpaperRefresh}
-        onOpenSettings={(focus) => {
-          settingsHighlight = focus;
-          settingsOpen = true;
-        }}
+        onFail={(hint) =>
+          showNotice({
+            tone: 'fail',
+            before: hint.before,
+            action: { text: hint.link, focus: hint.focus },
+            after: hint.after,
+          })
+        }
       />
     {/if}
   </div>
@@ -434,6 +459,7 @@
     <SettingsModal
       settings={ytab.settings}
       highlight={settingsHighlight}
+      origin={settingsOrigin}
       onClose={() => {
         settingsOpen = false;
         settingsHighlight = null;
@@ -456,6 +482,8 @@
     />
   {/if}
   {/if}
+
+  <NoticeHost onAction={(focus) => openSettings(focus)} />
 {/if}
 
 <style>
@@ -520,8 +548,6 @@
     padding-top: 0.35rem;
   }
   .ghost-btn {
-    position: fixed;
-    z-index: 5;
     width: 40px;
     height: 40px;
     border: 0;
@@ -536,7 +562,9 @@
   .ghost-btn:hover {
     color: rgba(255, 255, 255, 0.92);
   }
-  .settings-btn {
+  .settings-slot {
+    position: fixed;
+    z-index: 5;
     left: 1rem;
     bottom: 1.1rem;
   }

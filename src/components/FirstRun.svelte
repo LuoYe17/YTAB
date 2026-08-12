@@ -36,7 +36,9 @@
           ? buildAuthorDefaultAppsCached()
           : Promise.resolve([] as AppItem[])
         ).catch(() => [] as AppItem[]),
-        fetchHitokoto().catch(() => null),
+        fetchHitokoto()
+          .then((r) => (r.ok ? r.value : null))
+          .catch(() => null),
         fetchRandomWallpaper(settings)
           .then((got) => (got.ok ? got.item : null))
           .catch(() => null),

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { wallpaperFailHint } from './wallpaperFail';
 
 describe('wallpaperFailHint', () => {
-  it('网络失败：指向 API Key', () => {
+  it('网络失败：指向密钥', () => {
     const hint = wallpaperFailHint('network');
     expect(hint.focus).toBe('apiKey');
-    expect(hint.link).toContain('API Key');
+    expect(hint.link).toBe('去设置 → 壁纸填个密钥');
     expect(hint.before).toContain('(｡•́︿•̀｡)');
   });
 

@@ -1,15 +1,20 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { fade } from 'svelte/transition';
+  import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { Settings } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
+  import { plainNotice } from '../lib/notice';
+  import { purityAfterClearingKey, toggleCategory, togglePurity } from '../lib/settingsFilters';
+  import { testWallhavenKey } from '../lib/wallhavenKey';
   import CapsuleSwitch from './CapsuleSwitch.svelte';
   import FilePickButton from './FilePickButton.svelte';
   import GhostTip from './GhostTip.svelte';
-  import MenuSelect from './MenuSelect.svelte';
+  import KnobSwitch from './KnobSwitch.svelte';
+  import SegmentedControl from './SegmentedControl.svelte';
 
   type Tab = 'general' | 'wallpaper' | 'data';
+  type Sheet = 'export' | 'import' | 'reset' | null;
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'general', label: '通用' },
@@ -22,6 +27,7 @@
   /** 官网未上线；上线后改为 true。 */
   const SITE_LIVE = false;
   const SITE_URL = 'https://ytab.luoye.pro';
+  const KEY_URL = 'https://wallhaven.cc/settings/account';
 
   let {
     settings,
@@ -50,12 +56,24 @@
   let includeIcons = $state(true);
   let includeApiKey = $state(false);
   let exportBusy = $state(false);
-  let importError = $state('');
-  let confirmReset = $state(false);
+  let sheet = $state<Sheet>(null);
+  let pendingFile = $state<File | null>(null);
   let apiKeyEl = $state<HTMLInputElement | null>(null);
   let navEl = $state<HTMLElement | null>(null);
   let pill = $state({ top: 0, height: 0 });
   let pillSlide = $state(false);
+  let revealKey = $state(false);
+  let keyOk = $state(false);
+  let keyFlash = $state<'ok' | 'fail' | null>(null);
+  let testBusy = $state(false);
+
+  const hasKey = $derived(settings.wallhavenApiKey.trim().length > 0);
+
+  $effect(() => {
+    if (!highlight) return;
+    tab = 'wallpaper';
+    glow = highlight;
+  });
 
   $effect(() => {
     if (!glow) return;
@@ -71,7 +89,7 @@
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (confirmReset) confirmReset = false;
+      if (sheet) sheet = null;
       else onClose();
     };
     window.addEventListener('keydown', onKey);
@@ -98,22 +116,69 @@
     onChange({ ...settings, ...partial });
   }
 
-  async function handleExportClick() {
+  function onKeyInput(value: string) {
+    keyOk = false;
+    const nextHas = value.trim().length > 0;
+    const purity = !nextHas ? purityAfterClearingKey(settings.wallhavenPurity) : settings.wallhavenPurity;
+    patch({ wallhavenApiKey: value, wallhavenPurity: purity });
+  }
+
+  async function testKey() {
+    if (testBusy || !hasKey) return;
+    testBusy = true;
+    keyFlash = null;
+    const result = await testWallhavenKey(settings.wallhavenApiKey);
+    testBusy = false;
+    if (result === 'ok') {
+      keyOk = true;
+      keyFlash = 'ok';
+      window.setTimeout(() => {
+        if (keyFlash === 'ok') keyFlash = null;
+      }, 800);
+      return;
+    }
+    keyOk = false;
+    keyFlash = 'fail';
+    plainNotice('fail', result === 'invalid' ? '密钥无效' : '网络出现异常 请稍后再试');
+    window.setTimeout(() => {
+      if (keyFlash === 'fail') keyFlash = null;
+    }, 450);
+  }
+
+  async function confirmExport() {
+    sheet = null;
     exportBusy = true;
     try {
       await onExport({ includeIcons, includeApiKey });
+      plainNotice('ok', '已导出');
+    } catch {
+      plainNotice('fail', '导出失败');
     } finally {
       exportBusy = false;
     }
   }
 
-  async function onImportPicked(file: File) {
-    importError = '';
+  function onImportPicked(file: File) {
+    pendingFile = file;
+    sheet = 'import';
+  }
+
+  async function confirmImport() {
+    const file = pendingFile;
+    pendingFile = null;
+    sheet = null;
+    if (!file) return;
     try {
       await onImport(file);
+      plainNotice('ok', '已导入');
     } catch (err: unknown) {
-      importError = err instanceof Error ? err.message : '导入失败';
+      plainNotice('fail', err instanceof Error ? err.message : '导入失败');
     }
+  }
+
+  function confirmReset() {
+    sheet = null;
+    onResetAll();
   }
 
   function popFrom(node: HTMLElement, params: { x: number; y: number }) {
@@ -202,133 +267,220 @@
     </aside>
     <section>
       <header>
-        <h2>{TABS.find((t) => t.id === tab)?.label}</h2>
         <button type="button" class="close" onclick={onClose} aria-label="关闭">×</button>
       </header>
 
       <div class="pane">
         {#key tab}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
-          {#if tab === 'general'}
-            <div class="row">
-              <span id="lbl-open">点击 App 时</span>
-              <MenuSelect
-                labelledBy="lbl-open"
-                value={settings.openTarget}
-                options={[
-                  { value: 'current', label: '当前标签打开' },
-                  { value: 'new', label: '新标签打开' },
-                ]}
-                onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
-              />
-            </div>
-            <div class="row">
-              <span id="lbl-bing">Bing 入口</span>
-              <MenuSelect
-                labelledBy="lbl-bing"
-                value={settings.bingEndpoint}
-                options={[
-                  { value: 'cn', label: '国内 cn.bing.com' },
-                  { value: 'www', label: '国际 www.bing.com' },
-                ]}
-                onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
-              />
-            </div>
-          {:else if tab === 'wallpaper'}
-            <label class="stack" class:glow={glow === 'apiKey'}>
-              Wallhaven API Key
-              <input
-                type="password"
-                bind:this={apiKeyEl}
-                value={settings.wallhavenApiKey}
-                placeholder="可选"
-                oninput={(e) => patch({ wallhavenApiKey: (e.currentTarget as HTMLInputElement).value })}
-              />
-            </label>
-            <div class="filters" class:glow={glow === 'filters'}>
-              <fieldset>
-                <legend>纯度</legend>
-                <CapsuleSwitch
-                  label="SFW"
-                  on={settings.wallhavenPurity.sfw}
-                  onChange={(on) => patch({ wallhavenPurity: { ...settings.wallhavenPurity, sfw: on } })}
+            {#if tab === 'general'}
+              <div class="block">
+                <div class="head">
+                  <span id="lbl-open" class="title">打开方式</span>
+                  <span class="desc">只作用于起始页上的 App，搜索和页脚链接不走这项。</span>
+                </div>
+                <SegmentedControl
+                  labelledBy="lbl-open"
+                  value={settings.openTarget}
+                  options={[
+                    { value: 'current', label: '当前标签' },
+                    { value: 'new', label: '新标签' },
+                  ]}
+                  onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
                 />
-                <CapsuleSwitch
-                  label="Sketchy"
-                  on={settings.wallhavenPurity.sketchy}
-                  onChange={(on) => patch({ wallhavenPurity: { ...settings.wallhavenPurity, sketchy: on } })}
+              </div>
+              <div class="block">
+                <div class="head">
+                  <span id="lbl-bing" class="title">Bing</span>
+                  <span class="desc">国内是 cn.bing.com，国际是 www.bing.com。</span>
+                </div>
+                <SegmentedControl
+                  labelledBy="lbl-bing"
+                  value={settings.bingEndpoint}
+                  options={[
+                    { value: 'cn', label: '国内' },
+                    { value: 'www', label: '国际' },
+                  ]}
+                  onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
                 />
-                <CapsuleSwitch
-                  label="NSFW"
-                  on={settings.wallhavenPurity.nsfw}
-                  onChange={(on) => patch({ wallhavenPurity: { ...settings.wallhavenPurity, nsfw: on } })}
-                />
-              </fieldset>
-              <fieldset>
-                <legend>分类</legend>
-                <CapsuleSwitch
-                  label="General"
-                  on={settings.wallhavenCategories.general}
-                  onChange={(on) =>
-                    patch({ wallhavenCategories: { ...settings.wallhavenCategories, general: on } })}
-                />
-                <CapsuleSwitch
-                  label="Anime"
-                  on={settings.wallhavenCategories.anime}
-                  onChange={(on) =>
-                    patch({ wallhavenCategories: { ...settings.wallhavenCategories, anime: on } })}
-                />
-                <CapsuleSwitch
-                  label="People"
-                  on={settings.wallhavenCategories.people}
-                  onChange={(on) =>
-                    patch({ wallhavenCategories: { ...settings.wallhavenCategories, people: on } })}
-                />
-              </fieldset>
-            </div>
-          {:else if tab === 'data'}
-            <p class="hint">导出为 `.ytab`（ZIP）。元数据在包内；图标按原文件存。</p>
-            <div class="caps">
-              <CapsuleSwitch label="包含图标" on={includeIcons} onChange={(on) => (includeIcons = on)} />
-              <CapsuleSwitch
-                label="包含 Wallhaven API Key"
-                on={includeApiKey}
-                onChange={(on) => (includeApiKey = on)}
-              />
-            </div>
-            <button type="button" class="action" disabled={exportBusy} onclick={handleExportClick}>
-              {exportBusy ? '导出中…' : '导出备份'}
-            </button>
-            <div class="stack">
-              <span>导入备份</span>
-              <FilePickButton label="选择备份" accept=".ytab,application/zip" onFile={onImportPicked} />
-            </div>
-            {#if importError}
-              <p class="err">{importError}</p>
+              </div>
+            {:else if tab === 'wallpaper'}
+              <div class="block" class:glow={glow === 'apiKey'}>
+                <div class="head key-head">
+                  <span class="title">Wallhaven 密钥</span>
+                  {#if keyOk}
+                    <span class="key-ok" transition:scale={{ duration: 220, start: 0.45 }} aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="16" height="16">
+                        <path
+                          fill="none"
+                          stroke="#34c759"
+                          stroke-width="2.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M5 12.5 9.5 17 19 7"
+                        />
+                      </svg>
+                    </span>
+                  {/if}
+                  <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
+                  <span class="desc">提高请求限额；开限制必须填写。</span>
+                </div>
+                <div class="key-row">
+                  <input
+                    bind:this={apiKeyEl}
+                    class:flash-ok={keyFlash === 'ok'}
+                    class:flash-fail={keyFlash === 'fail'}
+                    type={revealKey ? 'text' : 'password'}
+                    value={settings.wallhavenApiKey}
+                    placeholder="可选"
+                    autocomplete="off"
+                    oninput={(e) => onKeyInput((e.currentTarget as HTMLInputElement).value)}
+                  />
+                  <button
+                    type="button"
+                    class="ghost"
+                    onclick={() => (revealKey = !revealKey)}
+                    aria-label={revealKey ? '隐藏密钥' : '显示密钥'}
+                  >
+                    {revealKey ? '隐藏' : '显示'}
+                  </button>
+                  {#if hasKey}
+                    <button type="button" class="action" disabled={testBusy} onclick={testKey}>测试</button>
+                  {/if}
+                </div>
+              </div>
+              <div class="block" class:glow={glow === 'filters'}>
+                <div class="head">
+                  <span class="title">纯度</span>
+                  <span class="desc">至少开一项。没密钥时不能开限制。</span>
+                </div>
+                <div class="caps">
+                  <CapsuleSwitch
+                    label="安全"
+                    on={settings.wallhavenPurity.sfw}
+                    onChange={(on) =>
+                      patch({ wallhavenPurity: togglePurity(settings.wallhavenPurity, 'sfw', on, hasKey) })}
+                  />
+                  <CapsuleSwitch
+                    label="擦边"
+                    on={settings.wallhavenPurity.sketchy}
+                    onChange={(on) =>
+                      patch({
+                        wallhavenPurity: togglePurity(settings.wallhavenPurity, 'sketchy', on, hasKey),
+                      })}
+                  />
+                  <CapsuleSwitch
+                    label="限制"
+                    on={settings.wallhavenPurity.nsfw}
+                    disabled={!hasKey}
+                    onChange={(on) =>
+                      patch({ wallhavenPurity: togglePurity(settings.wallhavenPurity, 'nsfw', on, hasKey) })}
+                  />
+                </div>
+              </div>
+              <div class="block" class:glow={glow === 'filters'}>
+                <div class="head">
+                  <span class="title">分类</span>
+                  <span class="desc">至少开一项。</span>
+                </div>
+                <div class="caps">
+                  <CapsuleSwitch
+                    label="常规"
+                    on={settings.wallhavenCategories.general}
+                    onChange={(on) =>
+                      patch({
+                        wallhavenCategories: toggleCategory(settings.wallhavenCategories, 'general', on),
+                      })}
+                  />
+                  <CapsuleSwitch
+                    label="动漫"
+                    on={settings.wallhavenCategories.anime}
+                    onChange={(on) =>
+                      patch({
+                        wallhavenCategories: toggleCategory(settings.wallhavenCategories, 'anime', on),
+                      })}
+                  />
+                  <CapsuleSwitch
+                    label="人物"
+                    on={settings.wallhavenCategories.people}
+                    onChange={(on) =>
+                      patch({
+                        wallhavenCategories: toggleCategory(settings.wallhavenCategories, 'people', on),
+                      })}
+                  />
+                </div>
+              </div>
+            {:else if tab === 'data'}
+              <div class="block">
+                <div class="head">
+                  <span class="title">导出</span>
+                  <span class="desc">导出为 .ytab。图标和密钥在下一步选。</span>
+                </div>
+                <button type="button" class="action" disabled={exportBusy} onclick={() => (sheet = 'export')}>
+                  {exportBusy ? '导出中…' : '导出'}
+                </button>
+              </div>
+              <div class="block">
+                <div class="head">
+                  <span class="title">导入</span>
+                  <span class="desc">从 .ytab 恢复，会整份替换当前数据。</span>
+                </div>
+                <FilePickButton label="选择文件" accept=".ytab,application/zip" onFile={onImportPicked} />
+              </div>
+              <div class="block">
+                <div class="head">
+                  <span class="title">重置</span>
+                  <span class="desc">清除全部本地数据并回到首次启动，不可撤销。</span>
+                </div>
+                <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置所有数据</button>
+              </div>
             {/if}
-            <hr class="sep" />
-            <p class="hint">重置会清除全部本地数据并回到首次启动，不可撤销。</p>
-            <button type="button" class="danger" onclick={() => (confirmReset = true)}>重置所有数据</button>
-          {/if}
           </div>
         {/key}
       </div>
     </section>
 
-    {#if confirmReset}
+    {#if sheet === 'export'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <div class="opt">
+            <span id="lbl-icons">包含图标</span>
+            <KnobSwitch labelledBy="lbl-icons" on={includeIcons} onChange={(on) => (includeIcons = on)} />
+          </div>
+          <div class="opt">
+            <span id="lbl-key">包含密钥</span>
+            <KnobSwitch labelledBy="lbl-key" on={includeApiKey} onChange={(on) => (includeApiKey = on)} />
+          </div>
+          <div class="confirm-row">
+            <button type="button" class="ghost" onclick={() => (sheet = null)}>取消</button>
+            <button type="button" class="action" onclick={confirmExport}>导出</button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'import'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <p>将用所选文件整份替换当前 App、文件夹、设置与壁纸。此操作不可撤销。</p>
+          <div class="confirm-row">
+            <button
+              type="button"
+              class="ghost"
+              onclick={() => {
+                pendingFile = null;
+                sheet = null;
+              }}>取消</button
+            >
+            <button type="button" class="action" onclick={confirmImport}>确定导入</button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'reset'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
           <p>将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动。此操作不可撤销。</p>
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={() => (confirmReset = false)}>取消</button>
-            <button
-              type="button"
-              class="danger"
-              onclick={() => {
-                confirmReset = false;
-                onResetAll();
-              }}>确定重置</button
-            >
+            <button type="button" class="ghost" onclick={() => (sheet = null)}>取消</button>
+            <button type="button" class="danger" onclick={confirmReset}>确定重置</button>
           </div>
         </div>
       </div>
@@ -447,7 +599,9 @@
     border-radius: 6px;
     color: rgba(255, 255, 255, 0.48);
     text-decoration: none;
-    transition: color 0.15s ease, background 0.15s ease;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
   }
   a.icon:hover {
     color: rgba(255, 255, 255, 0.95);
@@ -465,14 +619,8 @@
   header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-  h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
+    justify-content: flex-end;
+    padding: 0.45rem 0.65rem 0.15rem;
   }
   .close {
     appearance: none;
@@ -496,29 +644,65 @@
   .body {
     position: absolute;
     inset: 0;
-    padding: 1rem;
+    padding: 0.35rem 1rem 1rem;
     overflow: auto;
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.7rem;
   }
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-  .stack {
+  .block {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.5rem;
+    padding: 0.7rem 0.8rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.3rem 0.5rem;
+  }
+  .title {
+    font-weight: 600;
+  }
+  .desc {
+    opacity: 0.55;
+    font-size: 0.78rem;
+    flex: 1;
+    min-width: 8rem;
+  }
+  .get {
+    margin-left: auto;
+    color: #7ecbff;
+    text-decoration: none;
+    font-size: 0.8rem;
+  }
+  .key-head .desc {
+    flex-basis: 100%;
+  }
+  .get:hover {
+    text-decoration: underline;
+  }
+  .key-ok {
+    display: inline-grid;
+    place-items: center;
+    color: #34c759;
   }
   .caps {
     display: flex;
     flex-wrap: wrap;
     gap: 0.45rem;
   }
-  input[type='password'] {
+  .key-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .key-row input {
+    flex: 1;
+    min-width: 0;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(0, 0, 0, 0.25);
     color: inherit;
@@ -526,23 +710,18 @@
     padding: 0.45rem 0.65rem;
     font: inherit;
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  input[type='password']:focus {
+  .key-row input:focus {
     border-color: rgba(126, 203, 255, 0.55);
   }
-  fieldset {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    margin: 0;
-    padding: 0.65rem 0.8rem;
+  .key-row input.flash-ok {
+    border-color: #34c759;
+    box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.35);
   }
-  legend {
-    padding: 0 0.25rem;
-    opacity: 0.7;
+  .key-row input.flash-fail {
+    border-color: #ff3b30;
+    animation: shake 0.4s ease;
   }
   .action,
   .danger,
@@ -568,26 +747,6 @@
   .action:disabled {
     opacity: 0.6;
   }
-  .filters {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-    border-radius: 10px;
-    padding: 0.15rem;
-  }
-  .glow {
-    border-radius: 10px;
-    box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.85);
-    animation: glow-fade 1.5s ease forwards;
-  }
-  @keyframes glow-fade {
-    0% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.95);
-    }
-    100% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
-    }
-  }
   .danger {
     background: #ff3b30;
     color: #fff;
@@ -600,20 +759,41 @@
     color: inherit;
     border: 1px solid rgba(255, 255, 255, 0.16);
   }
-  .hint {
-    margin: 0;
-    opacity: 0.65;
-    font-size: 0.82rem;
+  .glow {
+    box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.85);
+    animation: glow-fade 1.5s ease forwards;
   }
-  .err {
-    color: #ff6b6b;
-    margin: 0;
+  @keyframes glow-fade {
+    0% {
+      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.95);
+    }
+    100% {
+      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
+    }
   }
-  .sep {
-    border: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    margin: 0.35rem 0;
-    width: 100%;
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(6px);
+    }
+    60% {
+      transform: translateX(-4px);
+    }
+    80% {
+      transform: translateX(4px);
+    }
+  }
+  .opt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
   }
   .confirm {
     position: absolute;

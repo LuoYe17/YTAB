@@ -1,0 +1,87 @@
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_SETTINGS, type WallpaperState } from './types';
+import { createWallpaperSession, type WallpaperItem } from './wallpaper';
+
+function item(id: string): WallpaperItem {
+  return { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: '2099-01-01' };
+}
+
+function todayStamp(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+describe('wallpaper session', () => {
+  it('prepare 成功后 commit 交出成图，busy 在两次调用之间锁住', async () => {
+    const acquired: WallpaperItem[] = [];
+    const session = createWallpaperSession({
+      acquire: async () => {
+        const next = item('a');
+        acquired.push(next);
+        return next;
+      },
+      decode: async () => {},
+    });
+
+    const preparing = session.prepare(DEFAULT_SETTINGS);
+    expect(session.busy).toBe(true);
+    expect(await session.prepare(DEFAULT_SETTINGS)).toBe(false);
+    expect(await preparing).toBe(true);
+
+    const committed = session.commit();
+    expect(committed?.wallhavenId).toBe('a');
+    expect(session.busy).toBe(false);
+    expect(session.commit()).toBeNull();
+    expect(acquired).toHaveLength(1);
+  });
+
+  it('acquire 失败则 prepare 为 false，commit 为空', async () => {
+    const session = createWallpaperSession({
+      acquire: async () => null,
+      decode: async () => {},
+    });
+    expect(await session.prepare(DEFAULT_SETTINGS)).toBe(false);
+    expect(session.busy).toBe(false);
+    expect(session.commit()).toBeNull();
+  });
+
+  it('ensure：未到日界则 keep，不 acquire', async () => {
+    let calls = 0;
+    const session = createWallpaperSession({
+      acquire: async () => {
+        calls += 1;
+        return item('x');
+      },
+      decode: async () => {},
+    });
+    const current: WallpaperState = {
+      imageUrl: 'data:cur',
+      fetchedOn: todayStamp(),
+      wallhavenId: 'cur',
+    };
+    expect(await session.ensure(DEFAULT_SETTINGS, current, false)).toEqual({ kind: 'keep' });
+    expect(calls).toBe(0);
+  });
+
+  it('ensure：日更会 beforeDaily 再换图', async () => {
+    let cleared = 0;
+    const session = createWallpaperSession({
+      acquire: async () => item('n'),
+      decode: async () => {},
+      beforeDaily: () => {
+        cleared += 1;
+      },
+    });
+    const current: WallpaperState = {
+      imageUrl: 'data:old',
+      fetchedOn: '2000-01-01',
+      wallhavenId: 'old',
+    };
+    const result = await session.ensure(DEFAULT_SETTINGS, current, false);
+    expect(cleared).toBe(1);
+    expect(result).toEqual({ kind: 'switched', item: item('n') });
+  });
+});

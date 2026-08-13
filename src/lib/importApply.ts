@@ -6,15 +6,13 @@ import { mergeSettings, type YtabState } from './types';
  * 把导入或重置得到的 raw 整理成可 persist 的一份。
  * 始终 `mergeSettings`（旧导出文件缺字段时补默认）。`endFirstRun` 默认 true：导入视为已完成首次启动；
  * 重置传 `{ endFirstRun: false }` 并传入 `createEmptyState()`，才会再出首次启动。
- * 导入与重置都会换掉整份设置与壁纸，`invalidatePool` 恒为 true，由调用方清池。
+ * 上屏与清池由壁纸上屏面按整理后的 `state.wallpaper` 处理，这里不管。
  */
 export function applyImportedState(
   raw: YtabState,
   opts?: { endFirstRun?: boolean },
 ): {
   state: YtabState;
-  invalidatePool: boolean;
-  displayUrl: string;
 } {
   const endFirstRun = opts?.endFirstRun ?? true;
   const imageUrl = typeof raw.wallpaper?.imageUrl === 'string' ? raw.wallpaper.imageUrl : '';
@@ -30,7 +28,5 @@ export function applyImportedState(
         wallhavenId: raw.wallpaper?.wallhavenId,
       },
     },
-    invalidatePool: true,
-    displayUrl: imageUrl,
   };
 }

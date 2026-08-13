@@ -118,9 +118,13 @@ export function createNoticeController(deps: NoticeControllerDeps = {}) {
     /**
      * 宿主转发 animationend。`arrive` 被换成 `slip` 时也会冒泡，
      * 因此只认右溜结束才真正卸下并放行排队中的那条。
+     *
+     * 用后缀匹配：Svelte 会给组件里的 `@keyframes` 加作用域前缀，
+     * 运行时收到的是 `svelte-xxxxx-slip` 而不是 `slip`。写死等号会让卡片
+     * 永远卸不掉，后面来的通知也就再没机会进场。
      */
     animationEnded(name: string): void {
-      if (phase !== 'out' || name !== 'slip') return;
+      if (phase !== 'out' || !name.endsWith('slip')) return;
       shown = null;
       if (pending) {
         const next = pending;

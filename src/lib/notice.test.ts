@@ -97,6 +97,25 @@ describe('notice controller', () => {
     expect(h.view()).toMatchObject({ phase: 'in', notice: { before: '导入失败' } });
   });
 
+  it('认得 Svelte 加了作用域前缀的动画名', () => {
+    const h = harness();
+    h.controller.show({ tone: 'ok', before: '已导出' });
+    h.controller.show({ tone: 'fail', before: '导入失败' });
+
+    // 运行时拿到的是 svelte-xxxxx-slip，不是 slip；写死等号会让卡片永远卸不掉
+    h.controller.animationEnded('svelte-1eceuci-slip');
+    expect(h.view()).toMatchObject({ phase: 'in', notice: { before: '导入失败' } });
+  });
+
+  it('带前缀的 arrive 同样不误卸', () => {
+    const h = harness();
+    h.controller.show({ tone: 'ok', before: '已导出' });
+    h.controller.show({ tone: 'fail', before: '导入失败' });
+
+    h.controller.animationEnded('svelte-1eceuci-arrive');
+    expect(h.view()).toMatchObject({ phase: 'out', notice: { before: '已导出' } });
+  });
+
   it('arrive 结束不误卸', () => {
     const h = harness();
     h.controller.show({ tone: 'ok', before: '已导出' });

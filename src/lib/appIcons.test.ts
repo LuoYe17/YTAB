@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getBestIcon } from 'favicon-pro';
-import { applyBundledIcons, bundledIconUrl, displayAppIcon, hostnameOf, resolveAppIcon, svgDataUrl } from './appIcons';
+import {
+  applyBundledIcons,
+  bundledIconUrl,
+  hostnameOf,
+  pack,
+  resolveAppIcon,
+  srcFor,
+  svgDataUrl,
+  unpack,
+} from './appIcons';
+import { faviconUrlFor } from './defaults';
+import { META_ICON_PREFIX } from './iconPersist';
+import cloudflareSvg from '../assets/app-icons/dash.cloudflare.com.svg?raw';
 import deepseekSvg from '../assets/app-icons/chat.deepseek.com.svg?raw';
 import bingSvg from '../assets/bing.svg?raw';
 import { createEmptyState, type AppItem } from './types';
@@ -21,6 +33,11 @@ describe('bundled App icons', () => {
 
   it('bundledIconUrl：作者默认站有内置，未知站为空', () => {
     expect(bundledIconUrl('https://github.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://dash.cloudflare.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://cursor.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://grok.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://x.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://twitter.com')).toMatch(/^data:image\/svg\+xml/);
     expect(bundledIconUrl('https://www.bilibili.com')).toMatch(/^data:image\/svg\+xml/);
     expect(bundledIconUrl('https://linux.do')).toBeTruthy();
     expect(bundledIconUrl('https://mail.163.com')).toBeTruthy();
@@ -28,12 +45,27 @@ describe('bundled App icons', () => {
     expect(bundledIconUrl('https://example.com')).toBe('');
   });
 
-  it('displayAppIcon：idb: 与相对路径在 chrome://newtab/ 会裂图，改走内置', () => {
+  it('srcFor：作者默认站坏引用走内置，未知站坏引用空串', () => {
     const site = 'https://chat.deepseek.com';
-    expect(displayAppIcon(site, 'idb:abc')).toMatch(/^data:image\/svg\+xml/);
-    expect(displayAppIcon(site, '/assets/x.svg')).toMatch(/^data:image\/svg\+xml/);
-    expect(displayAppIcon(site, 'data:keep')).toBe('data:keep');
-    expect(displayAppIcon('https://example.com', '/assets/x.svg')).toBe('/assets/x.svg');
+    expect(srcFor(app('ds', site, 'idb:abc'))).toMatch(/^data:image\/svg\+xml/);
+    expect(srcFor(app('ds', site, '/assets/x.svg'))).toMatch(/^data:image\/svg\+xml/);
+    expect(srcFor(app('ds', site, 'chrome://favicon'))).toMatch(/^data:image\/svg\+xml/);
+    expect(srcFor(app('ds', site, 'data:keep'))).toBe('data:keep');
+    expect(srcFor(app('ds', site, ''))).toMatch(/^data:image\/svg\+xml/);
+    expect(srcFor(app('ex', 'https://example.com', '/assets/x.svg'))).toBe('');
+    expect(srcFor(app('ex', 'https://example.com', 'idb:abc'))).toBe('');
+    expect(srcFor(app('ex', 'https://example.com', 'chrome://favicon'))).toBe('');
+    expect(srcFor(app('ex', 'https://example.com', ''))).toBe('');
+    expect(srcFor(app('gh', 'https://github.com', 'idb:abc'))).toMatch(/^data:image\/svg\+xml/);
+  });
+
+  it('srcFor：可用 http / data 原样返回，从不给出 idb: / 相对 / chrome:', () => {
+    const http = 'https://cdn.example.com/a.png';
+    expect(srcFor(app('ex', 'https://example.com', http))).toBe(http);
+    expect(srcFor(app('gh', 'https://github.com', http))).toBe(http);
+    expect(srcFor(app('ex', 'https://example.com', 'idb:abc'))).not.toMatch(/^idb:/);
+    expect(srcFor(app('ex', 'https://example.com', '/x.svg'))).not.toMatch(/^\//);
+    expect(srcFor(app('gh', 'https://github.com', 'idb:abc'))).not.toMatch(/^idb:/);
   });
 
   it('applyBundledIcons：只替换 hostname 命中且仍是自动抓取残留的 App', () => {
@@ -68,10 +100,76 @@ describe('bundled App icons', () => {
     expect(f.children[0]?.icon).toBe('data:gm');
   });
 
+  it('applyBundledIcons：用户上传的 SVG 即使 hostname 命中也不换', () => {
+    const custom = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('gh', 'https://github.com', custom)]],
+    };
+    const next = applyBundledIcons(state, new Map([['github.com', 'data:gh-bundled']]));
+    expect(next).toBe(state);
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(custom);
+  });
+
+  it('applyBundledIcons：已是当前内置则原引用', () => {
+    const data = 'data:image/svg+xml,now';
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('gh', 'https://github.com', data)]],
+    };
+    expect(applyBundledIcons(state, new Map([['github.com', data]]))).toBe(state);
+  });
+
+  it('pack：data: 进 blobs，meta 改 idb 引用；壁纸像素清空', () => {
+    const data = 'data:image/png;base64,aaa';
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('a', 'https://example.com', data)]],
+      wallpaper: { imageUrl: 'data:image/jpeg;base64,wp', fetchedOn: '2026-01-01', wallhavenId: 'w' },
+    };
+    const { meta, blobs } = pack(state);
+    expect(blobs.get('a')).toBe(data);
+    expect(meta.pages[0]![0]?.kind === 'app' && meta.pages[0]![0].icon).toBe(`${META_ICON_PREFIX}a`);
+    expect(meta.wallpaper.imageUrl).toBe('');
+    expect(meta.wallpaper.fetchedOn).toBe('2026-01-01');
+  });
+
+  it('unpack：hydrate 后再按 hostname 换代内置；用户上传不动', () => {
+    const png = 'data:image/png;base64,xx';
+    const state = {
+      ...createEmptyState(),
+      pages: [[
+        app('gh', 'https://github.com', `${META_ICON_PREFIX}gh`),
+        app('custom', 'https://github.com', `${META_ICON_PREFIX}custom`),
+        app('ex', 'https://example.com', `${META_ICON_PREFIX}ex`),
+      ]],
+    };
+    const next = unpack(state, new Map([['custom', png]]));
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(
+      bundledIconUrl('https://github.com'),
+    );
+    expect(next.pages[0]![1]?.kind === 'app' && next.pages[0]![1].icon).toBe(png);
+    expect(next.pages[0]![2]?.kind === 'app' && next.pages[0]![2].icon).toBe(
+      faviconUrlFor('https://example.com'),
+    );
+  });
+
+  it('unpack：内置站上的用户 SVG 解包后仍在', () => {
+    const customSvg = 'data:image/svg+xml;charset=utf-8,%3Csvg%3E%3C/svg%3E';
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('gh', 'https://github.com', `${META_ICON_PREFIX}gh`)]],
+    };
+    const next = unpack(state, new Map([['gh', customSvg]]));
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(customSvg);
+  });
+
   it('内置 SVG 不含 XML 非法控制符', () => {
     const illegal = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
     expect(deepseekSvg).not.toMatch(illegal);
     expect(bingSvg).not.toMatch(illegal);
+    expect(cloudflareSvg).not.toMatch(illegal);
+    expect(cloudflareSvg.match(/<svg/g)?.length).toBe(1);
   });
 
   it('svgDataUrl 剥掉 form feed，避免 img 裂图', () => {

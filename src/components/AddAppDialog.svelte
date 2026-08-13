@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import type { AppItem } from '../lib/types';
   import { createAppFromUrl, hostnameFallback, normalizeUrl } from '../lib/defaults';
-  import { resolveAppIcon } from '../lib/appIcons';
+  import { resolveAppIcon, srcFor } from '../lib/appIcons';
 
   let {
     initial = null,
@@ -23,13 +25,71 @@
   let icon = $state(initial?.icon ?? '');
   let fetching = $state(false);
   let saving = $state(false);
+  let fileError = $state('');
+  let imgFailed = $state(false);
+  let fileEl = $state<HTMLInputElement | null>(null);
+  let sheetEl = $state<HTMLFormElement | null>(null);
   let autofillJob: Promise<void> | null = null;
+  let autofillGen = 0;
+
+  const preview = $derived(
+    srcFor({ id: initial?.id ?? '', kind: 'app', name, url, icon }),
+  );
+  const glyph = $derived((name.trim() || hostnameFallback(url) || 'A').slice(0, 1));
+
+  $effect(() => {
+    void preview;
+    imgFailed = false;
+  });
+
+  function sheetTabbables(): HTMLElement[] {
+    if (!sheetEl) return [];
+    return [...sheetEl.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]):not(.sr)')];
+  }
+
+  $effect(() => {
+    // aria-modal 不会锁 Tab；打开落到第一个可改的框，关掉把焦点还回去。
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        onCancel();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = sheetTabbables();
+      if (!list.length) return;
+      const first = list[0]!;
+      const last = list[list.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !sheetEl?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !sheetEl?.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    void tick().then(() => {
+      sheetEl?.querySelector<HTMLElement>('input:not(.sr)')?.focus();
+    });
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  });
 
   async function autofill() {
     const normalized = normalizeUrl(url);
     url = normalized;
     if (!name.trim()) name = hostnameFallback(normalized);
     fetching = true;
+    const jobUrl = normalized;
+    const jobId = ++autofillGen;
+    const stillCurrent = () => jobId === autofillGen && url === jobUrl;
     const job = (async () => {
       const signal = AbortSignal.timeout(8000);
       try {
@@ -40,12 +100,15 @@
               signal.addEventListener('abort', () => r(''), { once: true });
             }),
           ]);
+          if (!stillCurrent()) return;
           if (!icon.trim()) icon = resolved;
         }
         // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
         const res = await fetch(normalized, { method: 'GET', signal });
+        if (!stillCurrent()) return;
         if (res.ok) {
           const html = await res.text();
+          if (!stillCurrent()) return;
           const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
           if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
         }
@@ -57,8 +120,11 @@
     try {
       await job;
     } finally {
-      fetching = false;
-      if (autofillJob === job) autofillJob = null;
+      // 旧任务回来不能改当前框，也不能把仍在跑的 fetching 清掉。
+      if (jobId === autofillGen) {
+        fetching = false;
+        if (autofillJob === job) autofillJob = null;
+      }
     }
   }
 
@@ -66,20 +132,25 @@
     if (url.trim()) void autofill();
   }
 
-  function onFile(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+  function onPickedFile(file: File) {
     const ok = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'].includes(file.type);
     if (!ok) {
-      alert('仅支持 png / jpg / svg / webp');
+      fileError = '仅支持 png / jpg / svg / webp';
       return;
     }
+    fileError = '';
     const reader = new FileReader();
     reader.onload = () => {
       icon = String(reader.result);
     };
     reader.readAsDataURL(file);
+  }
+
+  function onFileChange(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) onPickedFile(file);
+    input.value = '';
   }
 
   async function submit(e: Event) {
@@ -102,31 +173,71 @@
   }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true" transition:fade={{ duration: 160 }}>
-  <form class="card" onsubmit={submit} transition:scale={{ duration: 200, start: 0.96 }}>
-    <h2>{initial ? '编辑 App' : '添加 App'}</h2>
-    <label>
-      网址
-      <input bind:value={url} onblur={onUrlBlur} placeholder="https://" required />
-    </label>
-    <label>
-      名称
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="app-dlg-title" transition:fade={{ duration: 160 }}>
+  <button type="button" class="backdrop" aria-label="关闭" onclick={onCancel}></button>
+  <form
+    bind:this={sheetEl}
+    class="sheet ios-sheet"
+    onsubmit={submit}
+    transition:scale={{ duration: 200, start: 0.96, easing: cubicOut }}
+  >
+    <header>
+      <button type="button" class="icon-btn ios-tile" onclick={() => fileEl?.click()} aria-label="更换图标">
+        {#if preview && !imgFailed}
+          <img
+            src={preview}
+            alt=""
+            onerror={() => {
+              imgFailed = true;
+            }}
+          />
+        {:else}
+          <span class="ph">{glyph}</span>
+        {/if}
+      </button>
+      <input
+        bind:this={fileEl}
+        class="sr"
+        type="file"
+        accept=".png,.jpg,.jpeg,.svg,.webp,image/*"
+        onchange={onFileChange}
+        tabindex="-1"
+      />
+      <h2 id="app-dlg-title">{initial ? '编辑 App' : '添加 App'}</h2>
+      <button type="button" class="close" onclick={onCancel} aria-label="关闭">×</button>
+    </header>
+
+    <div class="block">
+      <div class="head">
+        <span class="title">名称</span>
+        <span class="hint">显示在图标下方，可随便改</span>
+      </div>
       <input bind:value={name} placeholder="自动获取后可改" />
-    </label>
-    <label>
-      图标 URL
-      <input bind:value={icon} placeholder="自动 favicon / 图片链接" />
-    </label>
-    <label class="file">
-      或本地上传
-      <input type="file" accept=".png,.jpg,.jpeg,.svg,.webp,image/*" onchange={onFile} />
-    </label>
-    {#if icon}
-      <div class="preview"><img src={icon} alt="" /></div>
+    </div>
+
+    <div class="block">
+      <div class="head">
+        <span class="title">网址</span>
+        <span class="hint">失焦后会尝试抓名称和图标</span>
+      </div>
+      <input bind:value={url} onblur={onUrlBlur} placeholder="https://" required />
+    </div>
+
+    <div class="block">
+      <div class="head">
+        <span class="title">图标链接</span>
+        <span class="hint">可填图片地址，或点左上角图标从本地选</span>
+      </div>
+      <input bind:value={icon} placeholder="自动获取 / 图片链接" />
+    </div>
+
+    {#if fileError}
+      <p class="err">{fileError}</p>
     {/if}
+
     <div class="row">
       <button type="button" class="ghost" onclick={onCancel}>取消</button>
-      <button type="submit" disabled={saving}>{fetching || saving ? '获取中…' : '保存'}</button>
+      <button type="submit" class="action" disabled={saving}>{fetching || saving ? '获取中…' : '保存'}</button>
     </div>
   </form>
 </div>
@@ -135,77 +246,170 @@
   .overlay {
     position: fixed;
     inset: 0;
-    z-index: 40;
+    z-index: 70;
     display: grid;
     place-items: center;
-    background: rgba(0, 0, 0, 0.4);
   }
-  .card {
-    width: min(400px, 92vw);
-    background: rgba(28, 28, 32, 0.55);
-    backdrop-filter: blur(24px) saturate(1.2);
+  .backdrop {
+    appearance: none;
+    position: absolute;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.28);
+    cursor: default;
+  }
+  .sheet {
+    position: relative;
+    z-index: 1;
+    width: min(420px, 92vw);
+    background: rgba(28, 28, 32, 0.52);
+    backdrop-filter: blur(28px) saturate(1.25);
     border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
     color: #f5f5f7;
-    border-radius: 12px;
-    padding: 1.2rem;
+    padding: 0 1rem 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
+    font-size: 0.9rem;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.85rem 0 0.15rem;
   }
   h2 {
-    margin: 0 0 0.25rem;
-    font-size: 1.05rem;
+    margin: 0;
+    flex: 1;
+    min-width: 0;
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
   }
-  label {
+  .close {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 1.35rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+  }
+  .close:hover {
+    opacity: 1;
+  }
+  .icon-btn {
+    appearance: none;
+    position: relative;
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  }
+  .icon-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+  }
+  .ph {
+    font-size: 1.25rem;
+    font-weight: 650;
+  }
+  .block {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-    font-size: 0.8rem;
-    opacity: 0.9;
+    gap: 0.45rem;
+    padding: 0.7rem 0.8rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
   }
-  input {
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 0.22rem 0.5rem;
+  }
+  .title {
+    font-weight: 600;
+  }
+  .hint {
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 0.75rem;
+    line-height: 1.2;
+  }
+  input:not(.sr) {
+    width: 100%;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(0, 0, 0, 0.25);
     color: inherit;
     border-radius: 8px;
-    padding: 0.55rem 0.7rem;
+    padding: 0.5rem 0.7rem;
+    font: inherit;
     font-size: 0.92rem;
+    outline: none;
+    transition: border-color 0.15s ease;
   }
-  .file input {
-    font-size: 0.8rem;
+  input:not(.sr):focus {
+    border-color: rgba(126, 203, 255, 0.55);
   }
-  .preview {
-    width: 48px;
-    height: 48px;
-    border-radius: 10px;
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
     overflow: hidden;
+    clip: rect(0 0 0 0);
   }
-  .preview img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  .err {
+    margin: 0;
+    color: #ff8a80;
+    font-size: 0.8rem;
   }
   .row {
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
-    margin-top: 0.35rem;
+    margin-top: 0.15rem;
   }
-  button {
+  .action,
+  .ghost {
     appearance: none;
     border: 0;
     border-radius: 8px;
     padding: 0.45rem 0.9rem;
     cursor: pointer;
-    background: #0a84ff;
+    font: inherit;
+    transition: background 0.15s ease;
+  }
+  .action {
+    background: rgba(255, 255, 255, 0.16);
     color: #fff;
   }
-  button.ghost {
+  .action:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.24);
+  }
+  .action:disabled {
+    opacity: 0.6;
+  }
+  .ghost {
     background: transparent;
     color: inherit;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.16);
   }
-  button:disabled {
-    opacity: 0.6;
+  .ghost:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
 </style>

@@ -14,7 +14,7 @@ export type WallpaperFailHint = {
 const HINTS: Record<WallpaperFailReason, WallpaperFailHint> = {
   network: {
     before: '换图失败了 (｡•́︿•̀｡) 检查一下网络，或者',
-    link: '去设置 → 壁纸填个 API Key',
+    link: '去设置 → 壁纸填个密钥',
     after: '吧',
     focus: 'apiKey',
   },

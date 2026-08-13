@@ -7,6 +7,10 @@
 | 哔哩哔哩 | https://www.bilibili.com |
 | 抖音 | https://www.douyin.com |
 | GitHub | https://github.com |
+| Cloudflare | https://dash.cloudflare.com |
+| Cursor | https://cursor.com |
+| Grok | https://grok.com |
+| X | https://x.com |
 | Linux Do | https://linux.do |
 | ChatGPT | https://chatgpt.com |
 | Claude | https://claude.ai |

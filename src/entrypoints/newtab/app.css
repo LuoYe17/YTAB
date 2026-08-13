@@ -22,3 +22,22 @@ body {
     sans-serif;
   background: #1a1b1e;
 }
+
+/* iOS 连续圆角。22px 时 squircle 和圆弧几乎一样，看不出；38px 才是大卡片那档。 */
+.ios-sheet {
+  border-radius: 38px;
+  corner-shape: superellipse(2);
+}
+.ios-sheet aside {
+  border-start-start-radius: 38px;
+  border-end-start-radius: 38px;
+  corner-shape: superellipse(2);
+}
+.ios-tile {
+  border-radius: 14px;
+  corner-shape: superellipse(2);
+}
+.ios-menu {
+  border-radius: 14px;
+  corner-shape: superellipse(2);
+}

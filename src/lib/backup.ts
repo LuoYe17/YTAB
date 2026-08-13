@@ -24,6 +24,7 @@ export async function exportYtab(
 
   if (!options.includeApiKey) {
     clone.settings.wallhavenApiKey = '';
+    clone.settings.wallhavenKeyOk = false;
   }
 
   const iconMap: Record<string, string> = {};

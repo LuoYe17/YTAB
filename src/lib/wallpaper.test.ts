@@ -1,10 +1,61 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, type WallpaperState } from './types';
-import { createWallpaperSession, todayLocal, type WallpaperItem } from './wallpaper';
+import { DEFAULT_SETTINGS, mergeSettings, type WallpaperState } from './types';
+import {
+  createWallpaperSession,
+  todayLocal,
+  wallhavenSearchParams,
+  type WallpaperItem,
+} from './wallpaper';
 
 function item(id: string): WallpaperItem {
   return { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: '2099-01-01' };
 }
+
+describe('mergeSettings', () => {
+  it('旧设置缺字段则补上默认动漫和热门', () => {
+    const s = mergeSettings({ openTarget: 'new' });
+    expect(s.openTarget).toBe('new');
+    expect(s.wallhavenCategories).toEqual(DEFAULT_SETTINGS.wallhavenCategories);
+    expect(s.wallhavenSorting).toBe('toplist');
+    expect(s.wallhavenApiKey).toBe('');
+  });
+});
+
+describe('wallhavenSearchParams', () => {
+  it('默认热门近一月、只要动漫、不带关键词、桌面比例仍在', () => {
+    const p = wallhavenSearchParams(DEFAULT_SETTINGS);
+    expect(p.get('sorting')).toBe('toplist');
+    expect(p.get('topRange')).toBe('1M');
+    expect(p.get('q')).toBeNull();
+    expect(p.get('purity')).toBe('100');
+    expect(p.get('categories')).toBe('010');
+    expect(p.get('atleast')).toBe('1920x1080');
+    expect(p.get('ratios')).toBe('16x9,16x10');
+    expect(p.get('apikey')).toBeNull();
+  });
+
+  it('密钥不进查询串', () => {
+    const p = wallhavenSearchParams({ ...DEFAULT_SETTINGS, wallhavenApiKey: 'secret-key' });
+    expect(p.get('apikey')).toBeNull();
+  });
+
+  it('选了标签则按空格写入 q', () => {
+    const p = wallhavenSearchParams({
+      ...DEFAULT_SETTINGS,
+      wallhavenTags: ['anime girls', 'night'],
+    });
+    expect(p.get('q')).toBe('anime girls night');
+  });
+
+  it('当前分类没有的标签不写入 q', () => {
+    const p = wallhavenSearchParams({
+      ...DEFAULT_SETTINGS,
+      wallhavenCategories: { general: true, anime: false, people: false },
+      wallhavenTags: ['anime girls', 'night'],
+    });
+    expect(p.get('q')).toBe('night');
+  });
+});
 
 describe('wallpaper session', () => {
   it('prepare 成功后 commit 交出成图，busy 在两次调用之间锁住', async () => {

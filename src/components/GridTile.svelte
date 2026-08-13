@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createDraggable, createDroppable } from '@dnd-kit/svelte';
-  import { bundledIconUrl, displayAppIcon } from '../lib/appIcons';
-  import type { GridItem } from '../lib/types';
+  import { srcFor } from '../lib/appIcons';
+  import type { AppItem, GridItem } from '../lib/types';
 
   let {
     item,
@@ -35,17 +35,20 @@
     },
   });
 
-  const iconSrc = $derived(item.kind === 'app' ? displayAppIcon(item.url, item.icon) : '');
-  const showIcon = $derived(
-    !!iconSrc &&
-      !iconSrc.startsWith('idb:') &&
-      !iconSrc.startsWith('/') &&
-      !iconSrc.startsWith('chrome:'),
-  );
+  function childThumb(child: AppItem): string {
+    return srcFor(child);
+  }
+
+  const iconSrc = $derived(item.kind === 'app' ? srcFor(item) : '');
+  const showIcon = $derived(!!iconSrc);
   let imgFailed = $state(false);
+  /** 远程裂图后再试站点图；都失败则走字号，与顶层 App 同一条回退链。 */
+  let childFailed = $state(new Set<string>());
   $effect(() => {
     void iconSrc;
+    if (item.kind === 'folder') void item.children;
     imgFailed = false;
+    childFailed = new Set();
   });
 </script>
 
@@ -64,10 +67,27 @@
     {#if item.kind === 'folder'}
       <div class="folder-preview">
         {#each Array.from({ length: 4 }, (_, i) => item.children[i] ?? null) as child}
-          {#if child?.icon}
-            <img src={displayAppIcon(child.url, child.icon)} alt="" draggable="false" />
-          {:else if child}
-            <span class="ph"></span>
+          {#if child}
+            {@const src = childThumb(child)}
+            {#if src && !childFailed.has(child.id)}
+              <img
+                src={src}
+                alt=""
+                draggable="false"
+                onerror={(e) => {
+                  const fb = srcFor({ ...child, icon: '' });
+                  const el = e.currentTarget as HTMLImageElement;
+                  if (fb && fb !== src && el.dataset.fb !== '1') {
+                    el.dataset.fb = '1';
+                    el.src = fb;
+                  } else {
+                    childFailed = new Set([...childFailed, child.id]);
+                  }
+                }}
+              />
+            {:else}
+              <span class="ph">{child.name.slice(0, 1)}</span>
+            {/if}
           {:else}
             <span class="slot"></span>
           {/if}
@@ -83,9 +103,9 @@
         alt=""
         draggable="false"
         onerror={(e) => {
-          const fb = bundledIconUrl(item.url);
+          const fb = item.kind === 'app' ? srcFor({ ...item, icon: '' }) : '';
           const el = e.currentTarget as HTMLImageElement;
-          if (fb && el.dataset.fb !== '1') {
+          if (fb && fb !== iconSrc && el.dataset.fb !== '1') {
             el.dataset.fb = '1';
             el.src = fb;
           } else {
@@ -164,6 +184,19 @@
   .icon.preview {
     background: rgba(255, 255, 255, 0.28);
   }
+  .folder-preview {
+    animation: folder-in 0.28s ease;
+  }
+  @keyframes folder-in {
+    from {
+      opacity: 0;
+      transform: scale(0.82);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
   .folder-preview,
   .merge-preview {
     display: grid;
@@ -182,10 +215,17 @@
     height: 100%;
     min-height: 0;
     border-radius: 4px;
-    object-fit: cover;
+    object-fit: contain;
     background: rgba(255, 255, 255, 0.35);
   }
+  .folder-preview img {
+    background: rgba(255, 255, 255, 0.16);
+  }
   .folder-preview .ph {
+    display: grid;
+    place-items: center;
+    font-size: 0.62rem;
+    font-weight: 650;
     background: rgba(0, 0, 0, 0.2);
   }
   .folder-preview .slot {

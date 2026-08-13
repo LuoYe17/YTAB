@@ -1,15 +1,9 @@
 /** 持久化：chrome.storage 只放小 meta；壁纸与 App 图标像素在 IndexedDB。 */
 
 import { storage } from 'wxt/utils/storage';
-import { createEmptyState, type YtabState } from './types';
-import {
-  IDB_ICON_PREFIX,
-  collectAppIds,
-  extractIconBlobs,
-  hydrateIconBlobs,
-  iconIdbKey,
-  staleIconKeys,
-} from './iconPersist';
+import { applyBundledIcons, bundledIconDataUrls, pack } from './appIcons';
+import { createEmptyState, mergeSettings, type YtabState } from './types';
+import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, staleIconKeys } from './iconPersist';
 
 const META_KEY = 'local:ytab:v1' as const;
 /** Legacy key — read once to migrate, then clear. */
@@ -133,27 +127,62 @@ async function readIconBlobs(): Promise<Map<string, string>> {
   return blobs;
 }
 
+/** 落盘步骤。数组顺序即写入顺序，不可重排。 */
+export type PersistStep =
+  | { kind: 'wallpaper'; imageUrl: string }
+  | { kind: 'icon'; id: string; data: string }
+  | { kind: 'meta'; meta: YtabState };
+
+/**
+ * 把内存状态拆成有序落盘步骤：壁纸像素 → 各图标像素 → meta。
+ * 计划顺序不能改：若先写 meta，像素失败后 `idb:` 引用会永久空白。
+ * 执行时图标像素攒齐后与 GC 同事务写入（见 writeNow），避免半截 IDB。
+ */
+export function persistPlan(state: YtabState): PersistStep[] {
+  const { meta, blobs } = pack(state);
+  const steps: PersistStep[] = [{ kind: 'wallpaper', imageUrl: state.wallpaper.imageUrl ?? '' }];
+  for (const [id, data] of blobs) {
+    steps.push({ kind: 'icon', id, data });
+  }
+  steps.push({ kind: 'meta', meta });
+  return steps;
+}
+
+// 只执行 plan。壁纸失败必须整单中止：meta 里 fetchedOn/wallhavenId 不能在 imageUrl 仍空时提交。
+// 有新图标像素却写失败则不能发 meta（否则 idb: 成永久空白）。
 async function writeNow(state: YtabState): Promise<void> {
-  const imageUrl = state.wallpaper.imageUrl ?? '';
-  const { meta, blobs } = extractIconBlobs(state);
-  // 像素先于 meta：chrome.storage 已不再装整包，先发 idb: 引用再丢像素会永久丢自定义图标。
-  try {
-    await writeWallpaperImage(imageUrl);
-  } catch (err) {
-    console.error('[ytab] wallpaper image persist failed', err);
+  const blobs = new Map<string, string>();
+  for (const step of persistPlan(state)) {
+    switch (step.kind) {
+      case 'wallpaper':
+        try {
+          await writeWallpaperImage(step.imageUrl);
+        } catch (err) {
+          console.error('[ytab] wallpaper image persist failed', err);
+          throw err;
+        }
+        break;
+      case 'icon':
+        blobs.set(step.id, step.data);
+        break;
+      case 'meta':
+        // 图标一次写入：同事务落盘，并清掉已删 App 的 key。
+        try {
+          await writeIconBlobs(blobs, collectAppIds(state));
+        } catch (err) {
+          console.error('[ytab] icon persist failed', err);
+          if (blobs.size > 0) return;
+        }
+        await ytabStore.setValue(step.meta);
+        break;
+    }
   }
-  try {
-    await writeIconBlobs(blobs, collectAppIds(state));
-  } catch (err) {
-    console.error('[ytab] icon persist failed', err);
-    if (blobs.size > 0) return;
-  }
-  await ytabStore.setValue(meta);
 }
 
 export async function loadState(): Promise<YtabState> {
   const value = await ytabStore.getValue();
   const state = value ?? createEmptyState();
+  state.settings = mergeSettings(state.settings);
 
   let imageUrl = '';
   try {
@@ -178,16 +207,24 @@ export async function loadState(): Promise<YtabState> {
     console.error('[ytab] icon read failed', err);
   }
 
-  const loaded = hydrateIconBlobs({ ...state, wallpaper: { ...state.wallpaper, imageUrl } }, iconBlobs);
+  const hydrated = { ...state, wallpaper: { ...state.wallpaper, imageUrl } };
+  // hydrate / unpack 每次都是新对象；只能拿 applyBundledIcons 的「有改才换引用」判断要不要落盘。
+  const afterHydrate = hydrateIconBlobs(hydrated, iconBlobs);
+  const loaded = applyBundledIcons(afterHydrate, await bundledIconDataUrls());
   // chrome.storage 里若还嵌着 data: 图标，必须走 saveState 写入链，先落 IDB 再发 meta。
-  const needsIconMigrate = extractIconBlobs(state).blobs.size > 0;
-  if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate) {
+  const needsIconMigrate = pack(state).blobs.size > 0;
+  const needsBundledUpgrade = loaded !== afterHydrate;
+  if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade) {
     await saveState(loaded);
   }
 
   return loaded;
 }
 
+/**
+ * 排队写入。`writeNow` 抛错时本 Promise reject（调用方才能提示失败）；
+ * catch 只修 writeChain，避免一次失败把后续 save 全部卡住。
+ */
 export async function saveState(state: YtabState): Promise<void> {
   latest = state;
   const run = writeChain.then(async () => {
@@ -201,13 +238,4 @@ export async function saveState(state: YtabState): Promise<void> {
     console.error('[ytab] saveState failed', err);
   });
   await run;
-}
-
-export async function patchState(
-  patch: (prev: YtabState) => YtabState,
-): Promise<YtabState> {
-  const prev = await loadState();
-  const next = patch(prev);
-  await saveState(next);
-  return next;
 }

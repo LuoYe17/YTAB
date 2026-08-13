@@ -1,14 +1,47 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { fade, scale } from 'svelte/transition';
-  import type { Settings } from '../lib/types';
+  import { cubicOut } from 'svelte/easing';
+  import type { Settings, WallhavenSorting } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
+  import { plainNotice } from '../lib/notice';
+  import { applyFilter, visibleTagPresets, type FilterAction } from '../lib/settingsFilters';
+  import { testWallhavenKey } from '../lib/wallhavenKey';
+  import CapsuleSwitch from './CapsuleSwitch.svelte';
+  import CustomScroll from './CustomScroll.svelte';
+  import FilePickButton from './FilePickButton.svelte';
+  import GhostTip from './GhostTip.svelte';
+  import KnobSwitch from './KnobSwitch.svelte';
+  import SegmentedControl from './SegmentedControl.svelte';
 
-  type Tab = 'general' | 'wallpaper' | 'search' | 'data' | 'about';
+  type Tab = 'general' | 'wallpaper' | 'data';
+  type Sheet = 'export' | 'import' | 'reset' | null;
+
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'general', label: '通用' },
+    { id: 'wallpaper', label: '壁纸' },
+    { id: 'data', label: '数据' },
+  ];
+
+  const REPO_URL = 'https://github.com/LuoYe17/YTAB';
+  const VERSION = 'v0.1.0';
+  /** 官网未上线；上线后改为 true。 */
+  const SITE_LIVE = false;
+  const SITE_URL = 'https://ytab.luoye.pro';
+  const KEY_URL = 'https://wallhaven.cc/settings/account';
+  const SORTING_OPTIONS: { value: WallhavenSorting; label: string }[] = [
+    { value: 'random', label: '随机' },
+    { value: 'date_added', label: '最新' },
+    { value: 'relevance', label: '相关' },
+    { value: 'views', label: '浏览' },
+    { value: 'favorites', label: '收藏' },
+    { value: 'toplist', label: '热门' },
+  ];
 
   let {
     settings,
     highlight = null,
+    origin = { x: 40, y: 40 },
     onClose,
     onChange,
     onExport,
@@ -17,8 +50,9 @@
   }: {
     settings: Settings;
     highlight?: WallpaperFailFocus | null;
+    origin?: { x: number; y: number };
     onClose: () => void;
-    onChange: (next: Settings) => void;
+    onChange: (next: Settings, invalidatePool?: boolean) => void;
     onExport: (opts: { includeIcons: boolean; includeApiKey: boolean }) => void | Promise<void>;
     onImport: (file: File) => void | Promise<void>;
     onResetAll: () => void;
@@ -31,8 +65,25 @@
   let includeIcons = $state(true);
   let includeApiKey = $state(false);
   let exportBusy = $state(false);
-  let importError = $state('');
+  let sheet = $state<Sheet>(null);
+  let pendingFile = $state<File | null>(null);
   let apiKeyEl = $state<HTMLInputElement | null>(null);
+  let navEl = $state<HTMLElement | null>(null);
+  let pill = $state({ top: 0, height: 0 });
+  let pillSlide = $state(false);
+  let revealKey = $state(false);
+  let keyFlash = $state<'ok' | 'fail' | null>(null);
+  let testBusy = $state(false);
+
+  const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
+  const keyOk = $derived(hasKey && settings.wallhavenKeyOk);
+  const tagPresets = $derived(visibleTagPresets(settings.wallhavenCategories));
+
+  $effect(() => {
+    if (!highlight) return;
+    tab = 'wallpaper';
+    glow = highlight;
+  });
 
   $effect(() => {
     if (!glow) return;
@@ -45,147 +96,484 @@
     return () => window.clearTimeout(id);
   });
 
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      if (sheet) sheet = null;
+      else onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
+
+  $effect(() => {
+    void tab;
+    const slide = untrack(() => pillSlide);
+    void tick().then(() => {
+      const btn = navEl?.querySelector<HTMLElement>(`[data-tab="${tab}"]`);
+      if (!btn) return;
+      // offset* 是 layout 坐标。getBoundingClientRect 会吃到 sheet 的 scale，指示条会飞到顶上。
+      pill = { top: btn.offsetTop, height: btn.offsetHeight };
+      if (!slide) {
+        requestAnimationFrame(() => {
+          pillSlide = true;
+        });
+      }
+    });
+  });
+
   function patch(partial: Partial<Settings>) {
     onChange({ ...settings, ...partial });
   }
 
-  function handleResetAll() {
-    const ok = window.confirm(
-      '将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动引导。此操作不可撤销。确定继续？',
-    );
-    if (!ok) return;
-    onResetAll();
+  function commitFilter(action: FilterAction) {
+    const result = applyFilter(settings, action);
+    if (result.notice) plainNotice('fail', result.notice);
+    onChange(result.settings, result.invalidatePool);
   }
 
-  async function handleExportClick() {
+  function setPurity(key: 'sfw' | 'sketchy' | 'nsfw', on: boolean) {
+    commitFilter({ type: 'purity', key, on });
+  }
+
+  function setCategory(key: 'general' | 'anime' | 'people', on: boolean) {
+    commitFilter({ type: 'category', key, on });
+  }
+
+  function setTag(id: string, on: boolean) {
+    commitFilter({ type: 'tag', id, on });
+  }
+
+  function onKeyInput(value: string) {
+    commitFilter({ type: 'setKey', value });
+  }
+
+  async function testKey() {
+    if (testBusy || !hasKey) return;
+    testBusy = true;
+    keyFlash = null;
+    const key = settings.wallhavenApiKey;
+    const result = await testWallhavenKey(key);
+    testBusy = false;
+    if (settings.wallhavenApiKey !== key) return;
+    if (result === 'ok') {
+      patch({ wallhavenKeyOk: true });
+      keyFlash = 'ok';
+      window.setTimeout(() => {
+        if (keyFlash === 'ok') keyFlash = null;
+      }, 800);
+      return;
+    }
+    patch({ wallhavenKeyOk: false });
+    keyFlash = 'fail';
+    plainNotice('fail', result === 'invalid' ? '密钥无效' : '网络出现异常 请稍后再试');
+    window.setTimeout(() => {
+      if (keyFlash === 'fail') keyFlash = null;
+    }, 450);
+  }
+
+  async function confirmExport() {
+    sheet = null;
     exportBusy = true;
     try {
-      await onExport({
-        includeIcons,
-        includeApiKey,
-      });
+      await onExport({ includeIcons, includeApiKey });
+      plainNotice('ok', '已导出');
+    } catch {
+      plainNotice('fail', '导出失败');
     } finally {
       exportBusy = false;
     }
   }
 
-  async function onImportFile(e: Event) {
-    importError = '';
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
+  function onImportPicked(file: File) {
+    pendingFile = file;
+    sheet = 'import';
+  }
+
+  async function confirmImport() {
+    const file = pendingFile;
+    pendingFile = null;
+    sheet = null;
     if (!file) return;
     try {
       await onImport(file);
-    } catch (err) {
-      importError = err instanceof Error ? err.message : '导入失败';
+      plainNotice('ok', '已导入');
+    } catch (err: unknown) {
+      plainNotice('fail', err instanceof Error ? err.message : '导入失败');
     }
-    input.value = '';
+  }
+
+  function confirmReset() {
+    sheet = null;
+    onResetAll();
+  }
+
+  function popFrom(node: HTMLElement, params: { x: number; y: number }) {
+    const run = (x: number, y: number) => {
+      const r = node.getBoundingClientRect();
+      node.style.transformOrigin = `${x - r.left}px ${y - r.top}px`;
+    };
+    run(params.x, params.y);
+    return {
+      duration: 280,
+      easing: cubicOut,
+      css: (t: number) => `transform: scale(${0.14 + 0.86 * t}); opacity: ${t}`,
+    };
   }
 </script>
+
+{#snippet helpMark(text: string)}
+  <GhostTip label={text} placement="se" wrap>
+    <button type="button" class="help" aria-label={text}>?</button>
+  </GhostTip>
+{/snippet}
+
+{#snippet globe()}
+  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" />
+    <path
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      d="M3 12h18M12 3c2.5 3 4 6.5 4 9s-1.5 6-4 9c-2.5-3-4-6.5-4-9s1.5-6 4-9Z"
+    />
+  </svg>
+{/snippet}
 
 <div
   class="overlay"
   role="dialog"
   aria-modal="true"
   aria-label="设置"
-  transition:fade={{ duration: 160 }}
+  transition:fade={{ duration: 180 }}
 >
-  <div class="sheet" transition:scale={{ duration: 200, start: 0.96 }}>
+  <button type="button" class="backdrop" aria-label="关闭设置" onclick={onClose}></button>
+  <div class="sheet ios-sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
     <aside>
-      <button type="button" class:active={tab === 'general'} onclick={() => (tab = 'general')}>通用</button>
-      <button type="button" class:active={tab === 'wallpaper'} onclick={() => (tab = 'wallpaper')}>壁纸</button>
-      <button type="button" class:active={tab === 'search'} onclick={() => (tab = 'search')}>搜索</button>
-      <button type="button" class:active={tab === 'data'} onclick={() => (tab = 'data')}>数据</button>
-      <button type="button" class:active={tab === 'about'} onclick={() => (tab = 'about')}>关于</button>
+      <nav bind:this={navEl}>
+        <div
+          class="pill"
+          class:on={pill.height > 0}
+          class:slide={pillSlide}
+          style:top="{pill.top}px"
+          style:height="{pill.height}px"
+        ></div>
+        {#each TABS as item}
+          <button
+            type="button"
+            data-tab={item.id}
+            class:active={tab === item.id}
+            onclick={() => (tab = item.id)}
+          >
+            {item.label}
+          </button>
+        {/each}
+      </nav>
+      <div class="foot">
+        <div class="foot-start">
+          <GhostTip label="GitHub" placement="ne">
+            <a class="icon" href={REPO_URL} target="_blank" rel="noreferrer" aria-label="GitHub">
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+                />
+              </svg>
+            </a>
+          </GhostTip>
+        </div>
+        <span class="ver">{VERSION}</span>
+        <div class="foot-end">
+          <GhostTip label="官方网站" placement="nw">
+            {#if SITE_LIVE}
+              <a class="icon" href={SITE_URL} target="_blank" rel="noreferrer" aria-label="官方网站">
+                {@render globe()}
+              </a>
+            {:else}
+              <span class="icon off" aria-label="官方网站" aria-disabled="true">
+                {@render globe()}
+              </span>
+            {/if}
+          </GhostTip>
+        </div>
+      </div>
     </aside>
     <section>
       <header>
-        <h2>
-          {#if tab === 'general'}通用
-          {:else if tab === 'wallpaper'}壁纸
-          {:else if tab === 'search'}搜索
-          {:else if tab === 'data'}数据
-          {:else}关于
-          {/if}
-        </h2>
         <button type="button" class="close" onclick={onClose} aria-label="关闭">×</button>
       </header>
 
-      <div class="body">
+      <div class="pane">
         {#if tab === 'general'}
-          <label class="row">
-            <span>点击 App 时</span>
-            <select
-              value={settings.openTarget}
-              onchange={(e) =>
-                patch({ openTarget: (e.currentTarget as HTMLSelectElement).value as Settings['openTarget'] })
-              }
-            >
-              <option value="current">当前标签打开</option>
-              <option value="new">新标签打开</option>
-            </select>
-          </label>
-        {:else if tab === 'wallpaper'}
-          <label class="stack" class:glow={glow === 'apiKey'}>
-            Wallhaven API Key
-            <input
-              type="password"
-              bind:this={apiKeyEl}
-              value={settings.wallhavenApiKey}
-              placeholder="可选"
-              oninput={(e) => patch({ wallhavenApiKey: (e.currentTarget as HTMLInputElement).value })}
-            />
-          </label>
-          <div class="filters" class:glow={glow === 'filters'}>
-            <fieldset>
-              <legend>纯度</legend>
-              <label><input type="checkbox" checked={settings.wallhavenPurity.sfw} onchange={(e) => patch({ wallhavenPurity: { ...settings.wallhavenPurity, sfw: (e.currentTarget as HTMLInputElement).checked } })} /> SFW</label>
-              <label><input type="checkbox" checked={settings.wallhavenPurity.sketchy} onchange={(e) => patch({ wallhavenPurity: { ...settings.wallhavenPurity, sketchy: (e.currentTarget as HTMLInputElement).checked } })} /> Sketchy</label>
-              <label><input type="checkbox" checked={settings.wallhavenPurity.nsfw} onchange={(e) => patch({ wallhavenPurity: { ...settings.wallhavenPurity, nsfw: (e.currentTarget as HTMLInputElement).checked } })} /> NSFW</label>
-            </fieldset>
-            <fieldset>
-              <legend>分类</legend>
-              <label><input type="checkbox" checked={settings.wallhavenCategories.general} onchange={(e) => patch({ wallhavenCategories: { ...settings.wallhavenCategories, general: (e.currentTarget as HTMLInputElement).checked } })} /> General</label>
-              <label><input type="checkbox" checked={settings.wallhavenCategories.anime} onchange={(e) => patch({ wallhavenCategories: { ...settings.wallhavenCategories, anime: (e.currentTarget as HTMLInputElement).checked } })} /> Anime</label>
-              <label><input type="checkbox" checked={settings.wallhavenCategories.people} onchange={(e) => patch({ wallhavenCategories: { ...settings.wallhavenCategories, people: (e.currentTarget as HTMLInputElement).checked } })} /> People</label>
-            </fieldset>
+          <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
+            <CustomScroll>
+              <div class="block inline">
+                <div class="head">
+                  <span id="lbl-open" class="title">打开方式</span>
+                  {@render helpMark('只作用于起始页上的 App，搜索和页脚链接不走这项。')}
+                </div>
+                <SegmentedControl
+                  labelledBy="lbl-open"
+                  value={settings.openTarget}
+                  options={[
+                    { value: 'current', label: '当前标签' },
+                    { value: 'new', label: '新标签' },
+                  ]}
+                  onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
+                />
+              </div>
+              <div class="block inline">
+                <div class="head">
+                  <span id="lbl-bing" class="title">Bing</span>
+                  {@render helpMark('国内是 cn.bing.com，国际是 www.bing.com。')}
+                </div>
+                <SegmentedControl
+                  labelledBy="lbl-bing"
+                  value={settings.bingEndpoint}
+                  options={[
+                    { value: 'cn', label: '国内' },
+                    { value: 'www', label: '国际' },
+                  ]}
+                  onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
+                />
+              </div>
+            </CustomScroll>
           </div>
-        {:else if tab === 'search'}
-          <label class="row">
-            <span>Bing 入口</span>
-            <select
-              value={settings.bingEndpoint}
-              onchange={(e) =>
-                patch({ bingEndpoint: (e.currentTarget as HTMLSelectElement).value as Settings['bingEndpoint'] })
-              }
-            >
-              <option value="cn">国内 cn.bing.com</option>
-              <option value="www">国际 www.bing.com</option>
-            </select>
-          </label>
-        {:else if tab === 'data'}
-          <p class="hint">导出为 `.ytab`（ZIP）。元数据在包内；图标按原文件存。</p>
-          <label class="check"><input type="checkbox" bind:checked={includeIcons} /> 包含图标</label>
-          <label class="check"><input type="checkbox" bind:checked={includeApiKey} /> 包含 Wallhaven API Key</label>
-          <button type="button" class="action" disabled={exportBusy} onclick={handleExportClick}>
-            {exportBusy ? '导出中…' : '导出备份'}
-          </button>
-          <label class="stack">
-            导入备份
-            <input type="file" accept=".ytab,application/zip" onchange={onImportFile} />
-          </label>
-          {#if importError}
-            <p class="err">{importError}</p>
-          {/if}
-          <hr class="sep" />
-          <p class="hint">重置会清除全部本地数据并回到首次启动，不可撤销。</p>
-          <button type="button" class="danger" onclick={handleResetAll}>重置所有数据</button>
+        {:else if tab === 'wallpaper'}
+          <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
+            <CustomScroll>
+              <div class="block" class:glow={glow === 'apiKey'}>
+                <div class="head">
+                  {#if keyOk}
+                    <span class="key-ok" transition:scale={{ duration: 220, start: 0.45 }} aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="16" height="16">
+                        <path
+                          fill="none"
+                          stroke="#34c759"
+                          stroke-width="2.4"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="M5 12.5 9.5 17 19 7"
+                        />
+                      </svg>
+                    </span>
+                  {/if}
+                  <span class="title">Wallhaven 密钥</span>
+                  {@render helpMark('提高请求限额；开限制必须填写。')}
+                  <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
+                </div>
+                <div class="key-row">
+                  <div
+                    class="key-field"
+                    class:flash-ok={keyFlash === 'ok'}
+                    class:flash-fail={keyFlash === 'fail'}
+                  >
+                    <input
+                      bind:this={apiKeyEl}
+                      type={revealKey ? 'text' : 'password'}
+                      value={settings.wallhavenApiKey}
+                      placeholder="可选"
+                      autocomplete="off"
+                      oninput={(e) => onKeyInput((e.currentTarget as HTMLInputElement).value)}
+                    />
+                    <button
+                      type="button"
+                      class="eye"
+                      onclick={() => (revealKey = !revealKey)}
+                      aria-label={revealKey ? '隐藏密钥' : '显示密钥'}
+                    >
+                      {#if revealKey}
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            d="M3 3l18 18M9.9 4.2A9 9 0 0 1 12 4c5.2 0 9.5 3.4 11 8.5a12 12 0 0 1-1.8 2.8M6.1 6.1C4 7.6 2.4 9.6 1 12.5 2.5 17.6 6.8 21 12 21c1.7 0 3.3-.4 4.7-1"
+                          />
+                        </svg>
+                      {:else}
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M1 12.5C2.5 7.4 6.8 4 12 4s9.5 3.4 11 8.5C21.5 17.6 17.2 21 12 21S2.5 17.6 1 12.5Z"
+                          />
+                          <circle cx="12" cy="12.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+                        </svg>
+                      {/if}
+                    </button>
+                  </div>
+                  {#if hasKey}
+                    <button type="button" class="action" disabled={testBusy} onclick={testKey}>测试</button>
+                  {/if}
+                </div>
+              </div>
+              <div class="block" class:glow={glow === 'filters'}>
+                <div class="head">
+                  <span class="title">纯度</span>
+                  {@render helpMark('至少开一项。没密钥时不能开限制。')}
+                </div>
+                <div class="caps fill">
+                  <CapsuleSwitch
+                    label="安全"
+                    tile
+                    on={settings.wallhavenPurity.sfw}
+                    onChange={(on) => setPurity('sfw', on)}
+                  />
+                  <CapsuleSwitch
+                    label="擦边"
+                    tile
+                    on={settings.wallhavenPurity.sketchy}
+                    onChange={(on) => setPurity('sketchy', on)}
+                  />
+                  <CapsuleSwitch
+                    label="限制"
+                    tile
+                    on={settings.wallhavenPurity.nsfw}
+                    disabled={!hasKey}
+                    onChange={(on) => setPurity('nsfw', on)}
+                  />
+                </div>
+              </div>
+              <div class="block" class:glow={glow === 'filters'}>
+                <div class="head">
+                  <span class="title">分类</span>
+                  {@render helpMark('至少开一项。')}
+                </div>
+                <div class="caps fill">
+                  <CapsuleSwitch
+                    label="常规"
+                    tile
+                    on={settings.wallhavenCategories.general}
+                    onChange={(on) => setCategory('general', on)}
+                  />
+                  <CapsuleSwitch
+                    label="动漫"
+                    tile
+                    on={settings.wallhavenCategories.anime}
+                    onChange={(on) => setCategory('anime', on)}
+                  />
+                  <CapsuleSwitch
+                    label="人物"
+                    tile
+                    on={settings.wallhavenCategories.people}
+                    onChange={(on) => setCategory('people', on)}
+                  />
+                </div>
+              </div>
+              <div class="block inline">
+                <div class="head">
+                  <span id="wallpaper-sorting" class="title">排序</span>
+                  {@render helpMark('热门按近一个月。有标签时相关更准。')}
+                </div>
+                <SegmentedControl
+                  labelledBy="wallpaper-sorting"
+                  value={settings.wallhavenSorting || 'toplist'}
+                  options={SORTING_OPTIONS}
+                  fill
+                  onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}
+                />
+              </div>
+              <div class="block">
+                <div class="head">
+                  <span class="title">标签</span>
+                  {@render helpMark('可选。跟着上面的分类换；多选一起搜；全关则不限。')}
+                </div>
+                <div class="caps fill">
+                  {#each tagPresets as tag (tag.id)}
+                    <CapsuleSwitch
+                      label={tag.label}
+                      tile
+                      on={(settings.wallhavenTags ?? []).includes(tag.id)}
+                      onChange={(on) => setTag(tag.id, on)}
+                    />
+                  {/each}
+                </div>
+              </div>
+            </CustomScroll>
+          </div>
         {:else}
-          <p>YTAB 起始页 · v0.1.0</p>
-          <p class="hint">Chromium MV3 · 自用优先</p>
+          <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
+            <CustomScroll>
+              <div class="block inline">
+                <div class="head">
+                  <span class="title">导出</span>
+                  {@render helpMark('导出为 .ytab。图标和密钥在下一步选。')}
+                </div>
+                <button type="button" class="action" disabled={exportBusy} onclick={() => (sheet = 'export')}>
+                  {exportBusy ? '导出中…' : '导出'}
+                </button>
+              </div>
+              <div class="block inline">
+                <div class="head">
+                  <span class="title">导入</span>
+                  {@render helpMark('从 .ytab 恢复，会整份替换当前数据。')}
+                </div>
+                <FilePickButton label="选择文件" accept=".ytab,application/zip" onFile={onImportPicked} />
+              </div>
+              <div class="block inline">
+                <div class="head">
+                  <span class="title">重置</span>
+                  {@render helpMark('清除全部本地数据并回到首次启动，不可撤销。')}
+                </div>
+                <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置所有数据</button>
+              </div>
+            </CustomScroll>
+          </div>
         {/if}
       </div>
     </section>
+
+    {#if sheet === 'export'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <div class="opt">
+            <span id="lbl-icons">包含图标</span>
+            <KnobSwitch labelledBy="lbl-icons" on={includeIcons} onChange={(on) => (includeIcons = on)} />
+          </div>
+          <div class="opt">
+            <span id="lbl-key">包含密钥</span>
+            <KnobSwitch labelledBy="lbl-key" on={includeApiKey} onChange={(on) => (includeApiKey = on)} />
+          </div>
+          <div class="confirm-row">
+            <button type="button" class="ghost" onclick={() => (sheet = null)}>取消</button>
+            <button type="button" class="action" onclick={confirmExport}>导出</button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'import'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <p>将用所选文件整份替换当前 App、文件夹、设置与壁纸。此操作不可撤销。</p>
+          <div class="confirm-row">
+            <button
+              type="button"
+              class="ghost"
+              onclick={() => {
+                pendingFile = null;
+                sheet = null;
+              }}>取消</button
+            >
+            <button type="button" class="action" onclick={confirmImport}>确定导入</button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'reset'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <p>将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动。此操作不可撤销。</p>
+          <div class="confirm-row">
+            <button type="button" class="ghost" onclick={() => (sheet = null)}>取消</button>
+            <button type="button" class="danger" onclick={confirmReset}>确定重置</button>
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -196,9 +584,19 @@
     z-index: 45;
     display: grid;
     place-items: center;
+  }
+  .backdrop {
+    appearance: none;
+    position: absolute;
+    inset: 0;
+    border: 0;
+    padding: 0;
     background: rgba(0, 0, 0, 0.28);
+    cursor: default;
   }
   .sheet {
+    position: relative;
+    z-index: 1;
     width: min(640px, 94vw);
     height: min(420px, 80vh);
     display: grid;
@@ -206,51 +604,112 @@
     background: rgba(28, 28, 32, 0.52);
     backdrop-filter: blur(28px) saturate(1.25);
     color: #f5f5f7;
-    border-radius: 14px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
     font-size: 0.9rem;
   }
   aside {
+    position: relative;
+    z-index: 2;
     background: rgba(0, 0, 0, 0.25);
-    padding: 0.75rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  nav {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    padding: 0.75rem 0.5rem 0.5rem;
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
   }
-  aside button {
+  .pill {
+    position: absolute;
+    left: 0.5rem;
+    right: 0.5rem;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.14);
+    pointer-events: none;
+    opacity: 0;
+  }
+  .pill.on {
+    opacity: 1;
+  }
+  .pill.slide {
+    transition:
+      top 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+      height 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  nav button {
     appearance: none;
     border: 0;
     background: transparent;
     color: inherit;
     text-align: left;
     padding: 0.45rem 0.7rem;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
+    position: relative;
+    z-index: 1;
+    transition: color 0.15s ease;
   }
-  aside button.active {
-    background: rgba(255, 255, 255, 0.14);
+  nav button.active {
+    color: #fff;
   }
-  aside button {
-    transition: background 0.15s ease;
+  .foot {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    margin-top: auto;
+    padding: 0.45rem 0.6rem 0.7rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .foot-start {
+    justify-self: start;
+  }
+  .foot-end {
+    justify-self: end;
+  }
+  .ver {
+    justify-self: center;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    opacity: 0.45;
+    user-select: none;
+  }
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.48);
+    text-decoration: none;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
+  }
+  a.icon:hover {
+    color: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .icon.off {
+    opacity: 0.38;
   }
   section {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
   }
   header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-  h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
+    justify-content: flex-end;
+    padding: 0.55rem 0.9rem 0.15rem;
   }
   .close {
     appearance: none;
@@ -261,56 +720,168 @@
     line-height: 1;
     cursor: pointer;
     opacity: 0.7;
+    transition: opacity 0.15s ease;
+  }
+  .close:hover {
+    opacity: 1;
+  }
+  .pane {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
   }
   .body {
-    padding: 1rem;
-    overflow: auto;
+    position: absolute;
+    inset: 0;
+  }
+  .block {
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.5rem;
+    padding: 0.7rem 0.8rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
   }
-  .row {
-    display: flex;
+  .block.inline {
+    flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.75rem;
   }
-  .stack {
+  .block.inline .head {
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+  }
+  .block.inline .action,
+  .block.inline .danger {
+    align-self: center;
+    flex-shrink: 0;
+  }
+  .head {
     display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.22rem 0.5rem;
   }
-  select,
-  input[type='password'] {
+  .title {
+    font-weight: 600;
+  }
+  .help {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.48);
+    font: inherit;
+    font-size: 0.68rem;
+    line-height: 1;
+    cursor: help;
+  }
+  .help:hover {
+    color: rgba(255, 255, 255, 0.88);
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+  .get {
+    margin-left: auto;
+    color: #7ecbff;
+    text-decoration: none;
+    font-size: 0.8rem;
+  }
+  .get:hover {
+    text-decoration: underline;
+  }
+  .key-ok {
+    display: inline-grid;
+    place-items: center;
+    color: #34c759;
+  }
+  .caps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .caps.fill {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.4rem;
+  }
+  .key-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .key-field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+  .key-field input {
+    width: 100%;
+    box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(0, 0, 0, 0.25);
     color: inherit;
-    border-radius: 6px;
-    padding: 0.4rem 0.55rem;
-  }
-  fieldset {
-    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem 1rem;
+    padding: 0.45rem 2.1rem 0.45rem 0.65rem;
+    font: inherit;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .key-field input:focus {
+    border-color: rgba(126, 203, 255, 0.55);
+  }
+  .key-field.flash-ok input {
+    border-color: #34c759;
+    box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.35);
+  }
+  .key-field.flash-fail {
+    animation: shake 0.4s ease;
+  }
+  .key-field.flash-fail input {
+    border-color: #ff3b30;
+  }
+  .eye {
+    appearance: none;
+    position: absolute;
+    right: 0.28rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
     margin: 0;
-    padding: 0.65rem 0.8rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.42);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
   }
-  legend {
-    padding: 0 0.25rem;
-    opacity: 0.7;
+  .eye:hover {
+    color: rgba(255, 255, 255, 0.9);
   }
-  .action {
+  .action,
+  .danger,
+  .ghost {
     appearance: none;
     border: 0;
     align-self: flex-start;
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
     border-radius: 8px;
     padding: 0.45rem 0.9rem;
     cursor: pointer;
-    transition: background 0.15s ease;
+    font: inherit;
+    transition:
+      background 0.15s ease,
+      transform 0.15s ease;
+  }
+  .action {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
   }
   .action:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.24);
@@ -318,15 +889,19 @@
   .action:disabled {
     opacity: 0.6;
   }
-  .filters {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-    border-radius: 10px;
-    padding: 0.15rem;
+  .danger {
+    background: #ff3b30;
+    color: #fff;
+  }
+  .danger:hover {
+    background: #e0352b;
+  }
+  .ghost {
+    background: transparent;
+    color: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.16);
   }
   .glow {
-    border-radius: 10px;
     box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.85);
     animation: glow-fade 1.5s ease forwards;
   }
@@ -338,37 +913,57 @@
       box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
     }
   }
-  .danger {
-    appearance: none;
-    border: 0;
-    align-self: flex-start;
-    background: #ff3b30;
-    color: #fff;
-    border-radius: 8px;
-    padding: 0.45rem 0.9rem;
-    cursor: pointer;
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(6px);
+    }
+    60% {
+      transform: translateX(-4px);
+    }
+    80% {
+      transform: translateX(4px);
+    }
   }
-  .danger:hover {
-    background: #e0352b;
-  }
-  .hint {
-    margin: 0;
-    opacity: 0.65;
-    font-size: 0.82rem;
-  }
-  .err {
-    color: #ff6b6b;
-    margin: 0;
-  }
-  .check {
+  .opt {
     display: flex;
     align-items: center;
-    gap: 0.45rem;
+    justify-content: space-between;
+    gap: 1rem;
   }
-  .sep {
-    border: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    margin: 0.35rem 0;
-    width: 100%;
+  .confirm {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 1rem;
+  }
+  .confirm-card {
+    width: min(360px, 100%);
+    background: rgba(32, 32, 36, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .confirm-card p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+  }
+  .confirm-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
   }
 </style>

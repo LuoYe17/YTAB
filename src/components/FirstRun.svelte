@@ -36,7 +36,9 @@
           ? buildAuthorDefaultAppsCached()
           : Promise.resolve([] as AppItem[])
         ).catch(() => [] as AppItem[]),
-        fetchHitokoto().catch(() => null),
+        fetchHitokoto()
+          .then((r) => (r.ok ? r.value : null))
+          .catch(() => null),
         fetchRandomWallpaper(settings)
           .then((got) => (got.ok ? got.item : null))
           .catch(() => null),
@@ -66,7 +68,7 @@
 </script>
 
 <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="fr-title" transition:fade={{ duration: 160 }}>
-  <div class="sheet" transition:scale={{ duration: 200, start: 0.96 }}>
+  <div class="sheet ios-sheet" transition:scale={{ duration: 200, start: 0.96 }}>
     <header class="head">
       <h1 id="fr-title">欢迎使用 YTAB</h1>
       <p class="sub">选择起始配置</p>
@@ -79,11 +81,11 @@
       role="radiogroup"
       aria-label="起始配置"
     >
-      <div class="thumb" aria-hidden="true"></div>
+      <div class="thumb ios-tile" aria-hidden="true"></div>
 
       <button
         type="button"
-        class="choice"
+        class="choice ios-tile"
         class:selected={selected === 'author'}
         role="radio"
         aria-checked={selected === 'author'}
@@ -111,7 +113,7 @@
 
       <button
         type="button"
-        class="choice"
+        class="choice ios-tile"
         class:selected={selected === 'empty'}
         role="radio"
         aria-checked={selected === 'empty'}
@@ -197,7 +199,6 @@
     width: min(360px, 100%);
     background: #f2f2f7;
     color: #1d1d1f;
-    border-radius: 22px;
     padding: 0.85rem 0.85rem 0.7rem;
     margin-bottom: 0;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.32);
@@ -253,7 +254,6 @@
     z-index: 4;
     width: calc((100% - var(--gap)) / 2);
     height: 100%;
-    border-radius: 14px;
     border: 1.5px solid #0a84ff;
     background: transparent;
     box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.14);
@@ -272,7 +272,6 @@
     z-index: 1;
     border: 1.5px solid transparent;
     background: #fff;
-    border-radius: 14px;
     padding: 0.7rem 0.65rem;
     cursor: pointer;
     display: flex;

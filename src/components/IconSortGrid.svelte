@@ -2,8 +2,8 @@
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
   import type { GridItem } from '../lib/types';
-  import { displayAppIcon } from '../lib/appIcons';
-  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
+  import type { AppGridEvent } from '../lib/appGrid';
+  import { srcFor } from '../lib/appIcons';
   import {
     cellHit,
     hitEdgeRelative,
@@ -18,10 +18,12 @@
     items,
     enableMerge = true,
     compact = false,
+    scope = 'page',
     pageIndex = 0,
     pageCount = 1,
     onActivate,
-    onDragOutcome,
+    onEvent,
+    onOutsideDwell,
     onGridContextMenu,
     outsideRoot = null,
     hitRoot = null,
@@ -30,18 +32,22 @@
     /** false = 仅换位（文件夹内部） */
     enableMerge?: boolean;
     compact?: boolean;
+    /** 换位事件走 scope，不跟 compact：compact 只改格子尺寸。 */
+    scope?: 'page' | 'folder';
     pageIndex?: number;
     pageCount?: number;
     onActivate: (item: GridItem) => void;
-    onDragOutcome: (outcome: IconSortDragOutcome) => void;
-    onGridContextMenu?: (e: MouseEvent) => void;
+    onEvent: (event: AppGridEvent) => void;
+    /** 拖出壳外停住：只关视觉壳，不是 App 网格事件 */
+    onOutsideDwell?: () => void;
+    onGridContextMenu?: (e: MouseEvent, item: GridItem | null) => void;
     /** 指针拖出此元素外并停住 → 仅视觉关窗，拖拽继续跟手 */
     outsideRoot?: HTMLElement | null;
     /** 比网格更宽的落点带；起始页为 grid-slot，文件夹为面板 */
     hitRoot?: HTMLElement | null;
   } = $props();
 
-  const flipMs = 220;
+  const flipMs = 300;
   const MERGE_DWELL_MS = 400;
   const INSERT_DWELL_MS = 220;
   const OUTSIDE_DWELL_MS = 320;
@@ -49,15 +55,12 @@
   const PAGE_FLIP_DWELL_MS = 400;
   const PAGE_FLIP_COOLDOWN_MS = 650;
 
-  let localItems = $state<GridItem[]>([]);
   let activeId = $state<string | null>(null);
   let dwellTargetId = $state<string | null>(null);
   let mergeReady = $state(false);
   let pointer = $state({ x: 0, y: 0 });
   let suppressClick = $state(false);
-  let orderDirty = $state(false);
   let edgeSide = $state<'left' | 'right' | null>(null);
-  let didFlip = $state(false);
   /** 已触发「拖出关窗」，拖拽会话仍继续 */
   let outsideLocked = false;
 
@@ -68,26 +71,8 @@
   let pendingInsert: { sourceId: string; targetId: string; insertAt: number } | null = null;
   let pendingEdge: 'left' | 'right' | null = null;
   let lastInsertKey = '';
-  let orderAtDragStart: string[] = [];
   let flipCooldownUntil = 0;
   let gridEl = $state<HTMLElement | null>(null);
-
-  $effect(() => {
-    if (!activeId) {
-      localItems = items.map((i) => i);
-      return;
-    }
-    // 拖拽中仅在跨页后（集合变了且仍含 active）才同步 props
-    const propIds = new Set(items.map((i) => i.id));
-    const localIds = new Set(localItems.map((i) => i.id));
-    const sameSet = propIds.size === localIds.size && [...propIds].every((id) => localIds.has(id));
-    if (!sameSet && propIds.has(activeId)) {
-      localItems = items.map((i) => i);
-      lastInsertKey = '';
-      orderDirty = false;
-      orderAtDragStart = localItems.map((i) => i.id);
-    }
-  });
 
   function clearDwell() {
     if (dwellTimer) clearTimeout(dwellTimer);
@@ -115,7 +100,7 @@
   }
 
   function activeItem(): GridItem | null {
-    return localItems.find((i) => i.id === activeId) ?? null;
+    return items.find((i) => i.id === activeId) ?? null;
   }
 
   function canMerge(source: GridItem, target: GridItem): boolean {
@@ -126,8 +111,8 @@
   }
 
   function startDwell(sourceId: string, targetId: string) {
-    const source = localItems.find((i) => i.id === sourceId);
-    const target = localItems.find((i) => i.id === targetId);
+    const source = items.find((i) => i.id === sourceId);
+    const target = items.find((i) => i.id === targetId);
     if (!source || !target || !canMerge(source, target)) {
       clearDwell();
       return;
@@ -142,18 +127,18 @@
   }
 
   function insertBeforeIndex(sourceId: string, insertAt: number): boolean {
-    const from = localItems.findIndex((i) => i.id === sourceId);
+    const from = items.findIndex((i) => i.id === sourceId);
     if (from < 0) return false;
     let to = insertAt;
     if (from < to) to -= 1;
-    to = Math.max(0, Math.min(to, localItems.length - 1));
+    to = Math.max(0, Math.min(to, items.length - 1));
     if (from === to) return false;
-    const next = [...localItems];
+    const next = [...items];
     const [moved] = next.splice(from, 1);
     if (!moved) return false;
     next.splice(to, 0, moved);
-    localItems = next;
-    orderDirty = true;
+    const order = next.map((i) => i.id);
+    onEvent(scope === 'folder' ? { type: 'reorderFolder', order } : { type: 'reorderPage', order });
     return true;
   }
 
@@ -206,18 +191,11 @@
     if (!item) return;
     const toPage = pageIndex + (side === 'left' ? -1 : 1);
     if (toPage < 0 || toPage >= pageCount) return;
-    const fromWithout = localItems.filter((i) => i.id !== activeId);
     clearEdgePending();
     clearDwell();
     clearInsertPending();
     flipCooldownUntil = Date.now() + PAGE_FLIP_COOLDOWN_MS;
-    didFlip = true;
-    onDragOutcome({
-      type: 'pageFlip',
-      toPage,
-      fromPageWithoutItem: fromWithout,
-      item,
-    });
+    onEvent({ type: 'pageFlip', toPage });
   }
 
   /** @returns true 若指针在翻页热区（并处理计时） */
@@ -290,7 +268,7 @@
       clearDwell();
       clearInsertPending();
       clearEdgePending();
-      onDragOutcome({ type: 'outsideDwell' });
+      onOutsideDwell?.();
     }, OUTSIDE_DWELL_MS);
     return true;
   }
@@ -298,16 +276,13 @@
   function onDragStart(event: { operation: { source?: { id: string | number } | null } }) {
     activeId = String(event.operation.source?.id ?? '');
     lastInsertKey = '';
-    orderDirty = false;
-    didFlip = false;
     outsideLocked = false;
-    orderAtDragStart = localItems.map((i) => i.id);
     clearInsertPending();
     clearDwell();
     clearEdgePending();
     clearOutsidePending();
     suppressClick = false;
-    onDragOutcome({ type: 'sessionStart' });
+    onEvent({ type: 'beginDrag', itemId: activeId });
     window.addEventListener('pointermove', onPointerTrack, { passive: true });
   }
 
@@ -350,15 +325,15 @@
     const m = gridEl ? readGridMetrics(gridEl) : null;
     if (m) {
       const cell = cellHit(x, y, m);
-      if (cell && cell.index < localItems.length) {
-        const targetId = localItems[cell.index]?.id ?? null;
+      if (cell && cell.index < items.length) {
+        const targetId = items[cell.index]?.id ?? null;
         if (!targetId || sourceId === targetId) {
           clearDwell();
           clearInsertPending();
           return;
         }
-        const source = localItems.find((i) => i.id === sourceId);
-        const target = localItems.find((i) => i.id === targetId);
+        const source = items.find((i) => i.id === sourceId);
+        const target = items.find((i) => i.id === targetId);
         if (!source || !target) {
           clearDwell();
           clearInsertPending();
@@ -389,7 +364,7 @@
         x,
         y,
         m,
-        localItems.length,
+        items.length,
         'skip',
         { left: br.left, top: br.top, right: br.right, bottom: br.bottom },
       );
@@ -413,8 +388,8 @@
       return;
     }
 
-    const source = localItems.find((i) => i.id === sourceId);
-    const target = localItems.find((i) => i.id === targetId);
+    const source = items.find((i) => i.id === sourceId);
+    const target = items.find((i) => i.id === targetId);
     if (!source || !target) {
       clearDwell();
       clearInsertPending();
@@ -430,7 +405,7 @@
 
     clearDwell();
     const insertAt = insertIndexFromHit(
-      localItems.findIndex((i) => i.id === targetId),
+      items.findIndex((i) => i.id === targetId),
       hitEdgeRelative(nx, ny),
       'skip',
     );
@@ -461,52 +436,66 @@
     }, 0);
 
     if (wasOutside) {
-      orderDirty = false;
-      didFlip = false;
-      if (event.canceled || !sourceId) return;
-      onDragOutcome({
-        type: 'outsideDrop',
-        itemId: sourceId,
-        clientX: dropX,
-        clientY: dropY,
-      });
+      // 空 sourceId 无法 eject，必须 cancel 才能清掉 beginDrag 留下的 dragSnapshot。
+      if (event.canceled || !sourceId) {
+        onEvent({ type: 'cancelDrag' });
+        return;
+      }
+      onEvent({ type: 'eject', appId: sourceId, insertAt: insertAtOnPage(dropX, dropY, sourceId) });
       return;
     }
 
     if (event.canceled) {
-      onDragOutcome({ type: 'sessionCancel' });
-      orderDirty = false;
-      didFlip = false;
+      onEvent({ type: 'cancelDrag' });
       return;
     }
 
     if (ready && sourceId && dwellId && enableMerge) {
-      const source = localItems.find((i) => i.id === sourceId) ?? items.find((i) => i.id === sourceId);
-      const target = localItems.find((i) => i.id === dwellId) ?? items.find((i) => i.id === dwellId);
+      const source = items.find((i) => i.id === sourceId);
+      const target = items.find((i) => i.id === dwellId);
       if (source?.kind === 'app' && target?.kind === 'app') {
-        onDragOutcome({ type: 'merge', fromId: sourceId, ontoId: dwellId });
+        onEvent({ type: 'merge', fromId: sourceId, ontoId: dwellId });
       } else if (source?.kind === 'app' && target?.kind === 'folder') {
-        onDragOutcome({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
+        onEvent({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
       }
-      orderDirty = false;
-      didFlip = false;
       return;
     }
 
-    if (orderDirty || didFlip) {
-      const same =
-        !didFlip &&
-        localItems.length === orderAtDragStart.length &&
-        localItems.every((item, i) => item.id === orderAtDragStart[i]);
-      if (!same) onDragOutcome({ type: 'reorder', items: localItems });
-    }
-    orderDirty = false;
-    didFlip = false;
+    onEvent({ type: 'endDrag' });
+  }
+
+  /** 从文件夹拖出落到主网格；中心算插入（已经不会合文件夹）。 */
+  function insertAtOnPage(clientX: number, clientY: number, excludeId: string): number {
+    const pageGrid = document.querySelector<HTMLElement>('[data-ytab-grid="page"]');
+    const slot = document.querySelector<HTMLElement>('[data-ytab-drop-band]');
+    const m = pageGrid ? readGridMetrics(pageGrid) : null;
+    const host = slot ?? pageGrid;
+    if (!m || !host) return 0;
+    const occupied = [...pageGrid!.querySelectorAll('[data-tile-id]')].filter(
+      (el) => el.getAttribute('data-tile-id') !== excludeId,
+    ).length;
+    const br = host.getBoundingClientRect();
+    return (
+      insertIndexForDropBand(clientX, clientY, m, occupied, 'after', {
+        left: br.left,
+        top: br.top,
+        right: br.right,
+        bottom: br.bottom,
+      }) ?? occupied
+    );
   }
 
   function onTileActivate(item: GridItem) {
     if (suppressClick || activeId) return;
     onActivate(item);
+  }
+
+  function onContextMenu(e: MouseEvent) {
+    if (!onGridContextMenu) return;
+    e.preventDefault();
+    const id = (e.target as HTMLElement | null)?.closest('[data-tile-id]')?.getAttribute('data-tile-id');
+    const item = id ? (items.find((i) => i.id === id) ?? null) : null;
+    onGridContextMenu(e, item);
   }
 </script>
 
@@ -516,11 +505,11 @@
     bind:this={gridEl}
     class="grid"
     class:compact
-    data-ytab-grid={compact ? 'folder' : 'page'}
+    data-ytab-grid={scope}
     role="presentation"
-    oncontextmenu={onGridContextMenu}
+    oncontextmenu={onContextMenu}
   >
-    {#each localItems as item (item.id)}
+    {#each items as item (item.id)}
       <div animate:flip={{ duration: flipMs }}>
         <GridTile
           {item}
@@ -541,17 +530,20 @@
           {#if a.kind === 'folder'}
             <div class="folder-preview">
               {#each Array.from({ length: 4 }, (_, i) => a.children[i] ?? null) as child}
-                {#if child?.icon}
-                  <img src={displayAppIcon(child.url, child.icon)} alt="" />
-                {:else if child}
-                  <span class="ph"></span>
+                {#if child}
+                  {@const src = srcFor(child)}
+                  {#if src}
+                    <img src={src} alt="" />
+                  {:else}
+                    <span class="ph">{child.name.slice(0, 1)}</span>
+                  {/if}
                 {:else}
                   <span class="slot"></span>
                 {/if}
               {/each}
             </div>
-          {:else if a.kind === 'app' && displayAppIcon(a.url, a.icon)}
-            <img src={displayAppIcon(a.url, a.icon)} alt="" />
+          {:else if a.kind === 'app' && srcFor(a)}
+            <img src={srcFor(a)} alt="" />
           {:else}
             <span class="ph">{a.name.slice(0, 1)}</span>
           {/if}

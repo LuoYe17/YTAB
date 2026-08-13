@@ -10,36 +10,22 @@
   import WallpaperRefreshControl from '../../components/WallpaperRefreshControl.svelte';
   import FolderOverlay from '../../components/FolderOverlay.svelte';
   import WallpaperStage from '../../components/WallpaperStage.svelte';
+  import GhostTip from '../../components/GhostTip.svelte';
   import {
-    addApp as gridAddApp,
-    beginDragSession,
-    cancelDragSession,
-    currentPageItems as gridCurrentPageItems,
-    dropIntoFolder as gridDropIntoFolder,
-    ejectFromFolderAt as gridEjectFromFolderAt,
-    mergeApps as gridMergeApps,
-    openFolderItem as gridOpenFolderItem,
-    pageFlipDuringDrag as gridPageFlipDuringDrag,
+    apply,
+    createAppGridView,
+    currentPageItems,
     paginate,
-    renameFolder as gridRenameFolder,
-    reorderFolderChildren as gridReorderFolderChildren,
-    reorderPage as gridReorderPage,
-    type AppGridDragSnapshot,
+    type AppGridEvent,
     type AppGridView,
   } from '../../lib/appGrid';
-  import {
-    insertIndexForDropBand,
-    readGridMetrics,
-  } from '../../lib/gridInsertGeometry';
-  import { fetchHitokoto } from '../../lib/hitokoto';
+  import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
-  import { applyBundledIcons, bundledIconDataUrls } from '../../lib/appIcons';
   import { downloadBlob, exportYtab, importYtab } from '../../lib/backup';
+  import { applyImportedState } from '../../lib/importApply';
   import {
     createEmptyState,
     type AppItem,
-    type FolderItem,
-    type GridItem,
     type HitokotoState,
     type Settings,
     type WallpaperState,
@@ -53,20 +39,30 @@
     type WallpaperPrepareResult,
   } from '../../lib/wallpaper';
   import type { WallpaperFailFocus } from '../../lib/wallpaperFail';
+  import { plainNotice, showNotice } from '../../lib/notice';
+  import NoticeHost from '../../components/NoticeHost.svelte';
 
   let ready = $state(false);
   let loadFailed = $state(false);
   let ytab = $state(createEmptyState());
-  let pageIndex = $state(0);
+  /** live pages 只在这里；persist 时才写回 ytab.pages */
+  let grid = $state<AppGridView>(createAppGridView());
   let settingsOpen = $state(false);
   let settingsHighlight = $state<WallpaperFailFocus | null>(null);
   let addOpen = $state(false);
-  let openFolder = $state<FolderItem | null>(null);
-  /** Esc / 取消跨页拖时整表回滚 */
-  let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
+  let editingApp = $state<AppItem | null>(null);
   /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
   let mainEl = $state<HTMLElement | null>(null);
+  let settingsBtnEl = $state<HTMLButtonElement | null>(null);
+  let settingsOrigin = $state({ x: 40, y: 40 });
+
+  function openSettings(focus: WallpaperFailFocus | null = null) {
+    const r = settingsBtnEl?.getBoundingClientRect();
+    if (r) settingsOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    settingsHighlight = focus;
+    settingsOpen = true;
+  }
 
   onMount(() => {
     void bootstrap();
@@ -80,18 +76,7 @@
       ready = true;
       return;
     }
-    if (!localStorage.getItem('ytab:icon-bundle-v8')) {
-      try {
-        const bundled = await bundledIconDataUrls();
-        if (bundled.size > 0) {
-          ytab = applyBundledIcons(ytab, bundled);
-          await saveState(ytab);
-        }
-      } catch {
-        /* 内置图升级失败不挡起始页 */
-      }
-      localStorage.setItem('ytab:icon-bundle-v8', '1');
-    }
+    grid = createAppGridView(ytab.pages, 0);
     displayUrl = ytab.wallpaper.imageUrl;
     ready = true;
     if (!ytab.onboardingDone) return;
@@ -130,8 +115,15 @@
 
   async function refreshHitokoto() {
     const next = await fetchHitokoto();
-    if (!next) return;
-    await persist((prev) => ({ ...prev, hitokoto: next }));
+    if (!next.ok) return;
+    await persist((prev) => ({ ...prev, hitokoto: next.value }));
+  }
+
+  async function changeHitokoto(): Promise<HitokotoFetchResult> {
+    const next = await fetchHitokoto();
+    if (!next.ok) return next;
+    await persist((prev) => ({ ...prev, hitokoto: next.value }));
+    return next;
   }
 
   async function ensureWallpaper(force: boolean) {
@@ -160,24 +152,15 @@
     return new Promise<void>((r) => setTimeout(r, ms));
   }
 
-  function gridView(): AppGridView {
-    return {
-      pages: ytab.pages,
-      pageIndex,
-      openFolder,
-      dragSnapshot: dragPagesSnapshot,
-    };
-  }
-
-  function applyGridView(next: AppGridView) {
-    pageIndex = next.pageIndex;
-    openFolder = next.openFolder;
-    dragPagesSnapshot = next.dragSnapshot;
-  }
-
-  async function applyGrid(next: AppGridView) {
-    applyGridView(next);
-    await persist((prev) => ({ ...prev, pages: next.pages }));
+  function dispatchGrid(event: AppGridEvent) {
+    const { view, persist: write } = apply(grid, event);
+    grid = view;
+    if (write) {
+      void persist((prev) => ({ ...prev, pages: view.pages })).catch(() => {
+        // 网格已上屏；落盘失败必须说出来，否则拖完刷新会丢
+        plainNotice('fail', '保存失败了');
+      });
+    }
   }
 
   async function onFirstRun(result: {
@@ -202,15 +185,12 @@
       }
       return next;
     });
+    grid = createAppGridView(paginate(result.apps), 0);
     if (result.wallpaper) {
       displayUrl = result.wallpaper.imageUrl;
       wallpaperPool.rememberCurrent(result.wallpaper.wallhavenId);
     }
     schedulePoolFill(ytab.settings);
-  }
-
-  function currentPageItems(): GridItem[] {
-    return gridCurrentPageItems(gridView());
   }
 
   function openApp(app: AppItem) {
@@ -221,135 +201,57 @@
     }
   }
 
-  async function addApp(app: AppItem) {
-    await applyGrid(gridAddApp(gridView(), app));
+  function addApp(app: AppItem) {
+    dispatchGrid({ type: 'add', app });
+    addOpen = false;
+    editingApp = null;
+  }
+
+  function saveEditedApp(app: AppItem) {
+    dispatchGrid({ type: 'update', app });
+    editingApp = null;
     addOpen = false;
   }
 
-  async function mergeApps(fromId: string, ontoId: string) {
-    await applyGrid(gridMergeApps(gridView(), fromId, ontoId));
-  }
-
-  async function dropIntoFolder(appId: string, folderId: string) {
-    await applyGrid(gridDropIntoFolder(gridView(), appId, folderId));
-  }
-
-  async function reorderPage(pageItems: GridItem[]) {
-    await applyGrid(gridReorderPage(gridView(), pageItems));
-  }
-
-  function onGridDragSessionStart() {
-    applyGridView(beginDragSession(gridView()));
-  }
-
-  async function onGridDragSessionCancel() {
-    if (!dragPagesSnapshot) return;
-    await applyGrid(cancelDragSession(gridView()));
-  }
-
-  async function pageFlipDuringDrag(
-    toPage: number,
-    fromPageWithoutItem: GridItem[],
-    item: GridItem,
-  ) {
-    await applyGrid(gridPageFlipDuringDrag(gridView(), toPage, fromPageWithoutItem, item));
-  }
-
-  async function reorderFolderChildren(folderId: string, children: AppItem[]) {
-    await applyGrid(gridReorderFolderChildren(gridView(), folderId, children));
-  }
-
-  async function openFolderItem(folder: FolderItem) {
-    const next = gridOpenFolderItem(gridView(), folder);
-    if (folder.children.length <= 1) {
-      await applyGrid(next);
-      return;
-    }
-    applyGridView(next);
-  }
-
-  /** 文件夹拖出关窗后松手：按落点插入当前页 */
-  async function ejectFromFolderAt(
-    folderId: string,
-    appId: string,
-    clientX: number,
-    clientY: number,
-  ) {
-    const page = ytab.pages[pageIndex] ?? [];
-    const insertAt = insertIndexOnPage(page, clientX, clientY, appId);
-    await applyGrid(gridEjectFromFolderAt(gridView(), folderId, appId, insertAt));
-  }
-
-  /** 主网格落点：格子 + 左壁纸→首位 + 下/右→末尾。 */
-  function insertIndexOnPage(
-    page: GridItem[],
-    clientX: number,
-    clientY: number,
-    excludeId: string,
-  ): number {
-    const grid = document.querySelector<HTMLElement>('[data-ytab-grid="page"]');
-    const slot = document.querySelector<HTMLElement>('[data-ytab-drop-band]');
-    const m = grid ? readGridMetrics(grid) : null;
-    const host = slot ?? grid;
-    if (m && host) {
-      const occupied = page.filter((i) => i.id !== excludeId).length;
-      const br = host.getBoundingClientRect();
-      const at = insertIndexForDropBand(clientX, clientY, m, occupied, 'after', {
-        left: br.left,
-        top: br.top,
-        right: br.right,
-        bottom: br.bottom,
-      });
-      if (at != null) return at;
-    }
-    return page.length;
-  }
-
-  async function renameFolder(folderId: string, name: string) {
-    await applyGrid(gridRenameFolder(gridView(), folderId, name));
-  }
-
-  async function onSettingsChange(settings: Settings) {
-    const prev = ytab.settings;
-    const filterChanged =
-      JSON.stringify(prev.wallhavenPurity) !== JSON.stringify(settings.wallhavenPurity) ||
-      JSON.stringify(prev.wallhavenCategories) !== JSON.stringify(settings.wallhavenCategories);
+  async function onSettingsChange(settings: Settings, invalidatePool = false) {
     await persist((p) => ({ ...p, settings }));
-    if (filterChanged) {
+    if (invalidatePool) {
       wallpaperPool.clear();
       schedulePoolFill(settings);
     }
   }
 
-  async function onImportState(next: YtabState) {
-    wallpaperPool.clear();
-    await persist(() => ({ ...next, onboardingDone: true }));
-    displayUrl = next.wallpaper.imageUrl;
+  async function landImported(applied: ReturnType<typeof applyImportedState>) {
+    if (applied.invalidatePool) wallpaperPool.clear();
+    await persist(() => applied.state);
+    displayUrl = applied.displayUrl;
     settingsOpen = false;
     settingsHighlight = null;
-    pageIndex = 0;
-    schedulePoolFill(next.settings);
+    grid = createAppGridView(applied.state.pages, 0);
   }
 
-  async function onExportBackup(opts: { includeIcons: boolean; includeApiKey: boolean }) {
-    const blob = await exportYtab($state.snapshot(ytab), opts);
-    downloadBlob(blob, `ytab-backup-${new Date().toISOString().slice(0, 10)}.ytab`);
+  async function onImportState(next: YtabState) {
+    const applied = applyImportedState(next);
+    await landImported(applied);
+    schedulePoolFill(applied.state.settings);
   }
 
-  async function onImportBackup(file: File) {
+  async function onExportFile(opts: { includeIcons: boolean; includeApiKey: boolean }) {
+    const snap = $state.snapshot(ytab);
+    const blob = await exportYtab({ ...snap, pages: $state.snapshot(grid).pages }, opts);
+    downloadBlob(blob, `ytab-${new Date().toISOString().slice(0, 10)}.ytab`);
+  }
+
+  async function onImportFile(file: File) {
     const state = await importYtab(file);
     await onImportState(state);
   }
 
   async function onResetAll() {
-    wallpaperPool.clear();
-    await persist(() => createEmptyState());
-    displayUrl = '';
-    settingsOpen = false;
-    settingsHighlight = null;
-    pageIndex = 0;
-    openFolder = null;
+    await landImported(applyImportedState(createEmptyState(), { endFirstRun: false }));
     addOpen = false;
+    editingApp = null;
+    plainNotice('ok', '已重置');
   }
 </script>
 
@@ -367,57 +269,60 @@
     <div class="shade"></div>
     <main bind:this={mainEl} data-ytab-drop-band>
       <Clock />
-      <HitokotoLine text={ytab.hitokoto.text} from={ytab.hitokoto.from} />
+      <HitokotoLine text={ytab.hitokoto.text} from={ytab.hitokoto.from} onRefresh={changeHitokoto} />
       <SearchBox endpoint={ytab.settings.bingEndpoint} />
       {#if ytab.onboardingDone}
         <div class="grid-slot">
           <AppGrid
-            items={currentPageItems()}
-            pageIndex={pageIndex}
-            pageCount={ytab.pages.length}
+            items={currentPageItems(grid)}
+            pageIndex={grid.pageIndex}
+            pageCount={grid.pages.length}
             onOpenApp={openApp}
-            onOpenFolder={openFolderItem}
-            onPageChange={(i) => (pageIndex = i)}
-            onAdd={() => (addOpen = true)}
-            hitRoot={mainEl}
-            dnd={{
-              onMerge: mergeApps,
-              onDropIntoFolder: dropIntoFolder,
-              onReorderPage: reorderPage,
-              onPageFlip: pageFlipDuringDrag,
-              onDragSessionStart: onGridDragSessionStart,
-              onDragSessionCancel: onGridDragSessionCancel,
+            onAdd={() => {
+              editingApp = null;
+              addOpen = true;
             }}
+            onEditApp={(app) => {
+              addOpen = false;
+              editingApp = app;
+            }}
+            onEvent={dispatchGrid}
+            hitRoot={mainEl}
           />
         </div>
       {/if}
     </main>
 
-    <button
-      type="button"
-      class="ghost-btn settings-btn"
-      onclick={() => {
-        settingsHighlight = null;
-        settingsOpen = true;
-      }}
-      title="设置"
-      aria-label="设置"
-    >
+    <div class="settings-slot">
+      <GhostTip label="设置" placement="ne">
+        <button
+          bind:this={settingsBtnEl}
+          type="button"
+          class="ghost-btn"
+          onclick={() => openSettings()}
+          aria-label="设置"
+        >
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
         <path
           fill="currentColor"
           d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.2 7.2 0 0 0-1.62-.94l-.36-2.54A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.55-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.65 8.87a.49.49 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.77 14.5a.49.49 0 0 0-.12.61l1.92 3.32c.13.22.4.3.62.22l2.39-.96c.5.39 1.04.71 1.62.94l.36 2.54c.05.23.25.41.48.41h4c.24 0 .43-.17.48-.41l.36-2.54c.59-.23 1.13-.55 1.62-.94l2.39.96c.22.08.5 0 .62-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
         />
       </svg>
-    </button>
+        </button>
+      </GhostTip>
+    </div>
     {#if ytab.onboardingDone}
       <WallpaperRefreshControl
         onPrepare={prepareWallpaperRefresh}
         onCommit={commitWallpaperRefresh}
-        onOpenSettings={(focus) => {
-          settingsHighlight = focus;
-          settingsOpen = true;
-        }}
+        onFail={(hint) =>
+          showNotice({
+            tone: 'fail',
+            before: hint.before,
+            action: { text: hint.link, focus: hint.focus },
+            after: hint.after,
+          })
+        }
       />
     {/if}
   </div>
@@ -426,36 +331,54 @@
     <FirstRun settings={ytab.settings} onChoose={onFirstRun} />
   {/if}
 
-  {#if addOpen}
-    <AddAppDialog onSave={addApp} onCancel={() => (addOpen = false)} />
+  {#if addOpen || editingApp}
+    {#key editingApp?.id ?? 'new'}
+      <AddAppDialog
+        initial={editingApp}
+        onSave={editingApp ? saveEditedApp : addApp}
+        onCancel={() => {
+          addOpen = false;
+          editingApp = null;
+        }}
+      />
+    {/key}
   {/if}
 
   {#if settingsOpen}
     <SettingsModal
       settings={ytab.settings}
       highlight={settingsHighlight}
+      origin={settingsOrigin}
       onClose={() => {
         settingsOpen = false;
         settingsHighlight = null;
       }}
       onChange={onSettingsChange}
-      onExport={onExportBackup}
-      onImport={onImportBackup}
+      onExport={onExportFile}
+      onImport={onImportFile}
       onResetAll={onResetAll}
     />
   {/if}
 
-  {#if openFolder}
+  {#if grid.openFolder}
     <FolderOverlay
-      folder={openFolder}
-      onClose={() => (openFolder = null)}
+      folder={grid.openFolder}
+      onClose={() => dispatchGrid({ type: 'closeFolder' })}
       onOpenApp={openApp}
-      onRename={(name) => renameFolder(openFolder!.id, name)}
-      onReorderChildren={reorderFolderChildren}
-      onEjectAt={ejectFromFolderAt}
+      onRename={(name) =>
+        dispatchGrid({ type: 'renameFolder', folderId: grid.openFolder!.id, name })
+      }
+      onEvent={dispatchGrid}
+      onEditApp={(app) => {
+        addOpen = false;
+        editingApp = app;
+      }}
+      onDeleteApp={(app) => dispatchGrid({ type: 'removeApp', appId: app.id })}
     />
   {/if}
   {/if}
+
+  <NoticeHost onAction={(focus) => openSettings(focus)} />
 {/if}
 
 <style>
@@ -520,8 +443,6 @@
     padding-top: 0.35rem;
   }
   .ghost-btn {
-    position: fixed;
-    z-index: 5;
     width: 40px;
     height: 40px;
     border: 0;
@@ -536,7 +457,9 @@
   .ghost-btn:hover {
     color: rgba(255, 255, 255, 0.92);
   }
-  .settings-btn {
+  .settings-slot {
+    position: fixed;
+    z-index: 5;
     left: 1rem;
     bottom: 1.1rem;
   }

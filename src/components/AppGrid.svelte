@@ -1,89 +1,73 @@
 <script lang="ts">
-  import { fade } from 'svelte/transition';
-  import type { AppItem, FolderItem, GridItem } from '../lib/types';
-  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
+  import type { AppItem, GridItem } from '../lib/types';
+  import type { AppGridEvent } from '../lib/appGrid';
+  import CtxMenu from './CtxMenu.svelte';
   import IconSortGrid from './IconSortGrid.svelte';
-
-  /** 起始页对 App 网格拖拽结果的接线（由 IconSortDragOutcome 适配而来） */
-  export type AppGridDnd = {
-    onMerge: (fromId: string, ontoId: string) => void;
-    onDropIntoFolder: (appId: string, folderId: string) => void;
-    onReorderPage: (pageItems: GridItem[]) => void;
-    onPageFlip: (toPage: number, fromPageWithoutItem: GridItem[], item: GridItem) => void;
-    onDragSessionStart: () => void;
-    onDragSessionCancel: () => void;
-  };
 
   let {
     items,
     pageIndex = 0,
     pageCount = 1,
     onOpenApp,
-    onOpenFolder,
-    onPageChange,
     onAdd,
-    dnd,
+    onEditApp,
+    onEvent,
     hitRoot = null,
   }: {
     items: GridItem[];
     pageIndex?: number;
     pageCount?: number;
     onOpenApp: (app: AppItem) => void;
-    onOpenFolder: (folder: FolderItem) => void;
-    onPageChange?: (index: number) => void;
     onAdd: () => void;
-    dnd: AppGridDnd;
+    onEditApp: (app: AppItem) => void;
+    onEvent: (event: AppGridEvent) => void;
     /** 落点带；起始页传 main，这样时钟/搜索上方也能插到首位 */
     hitRoot?: HTMLElement | null;
   } = $props();
 
-  let menu = $state<{ x: number; y: number } | null>(null);
+  let menu = $state<{ x: number; y: number; target: GridItem | null } | null>(null);
   let slotEl = $state<HTMLElement | null>(null);
+
+  const menuItems = $derived.by(() => {
+    if (!menu) return [];
+    const target = menu.target;
+    if (!target) {
+      return [{ label: '添加 App', icon: 'add' as const, onPick: () => onAdd() }];
+    }
+    if (target.kind === 'app') {
+      return [
+        { label: '编辑', icon: 'edit' as const, onPick: () => onEditApp(target) },
+        {
+          label: '删除',
+          icon: 'delete' as const,
+          danger: true,
+          onPick: () => onEvent({ type: 'removeApp', appId: target.id }),
+        },
+      ];
+    }
+    return [
+      {
+        label: '删除',
+        icon: 'delete' as const,
+        danger: true,
+        onPick: () => onEvent({ type: 'removeFolder', folderId: target.id }),
+      },
+    ];
+  });
 
   function onActivate(item: GridItem) {
     menu = null;
     if (item.kind === 'app') onOpenApp(item);
-    else onOpenFolder(item);
+    else onEvent({ type: 'openFolder', folderId: item.id });
   }
 
-  function onDragOutcome(outcome: IconSortDragOutcome) {
-    switch (outcome.type) {
-      case 'sessionStart':
-        dnd.onDragSessionStart();
-        break;
-      case 'sessionCancel':
-        dnd.onDragSessionCancel();
-        break;
-      case 'reorder':
-        dnd.onReorderPage(outcome.items);
-        break;
-      case 'merge':
-        dnd.onMerge(outcome.fromId, outcome.ontoId);
-        break;
-      case 'intoFolder':
-        dnd.onDropIntoFolder(outcome.appId, outcome.folderId);
-        break;
-      case 'pageFlip':
-        dnd.onPageFlip(outcome.toPage, outcome.fromPageWithoutItem, outcome.item);
-        break;
-      default:
-        // 主网格不处理文件夹拖出（outsideDwell / outsideDrop）。
-        break;
-    }
-  }
-
-  function onGridContextMenu(e: MouseEvent) {
+  function onGridContextMenu(e: MouseEvent, item: GridItem | null) {
     e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY };
+    menu = { x: e.clientX, y: e.clientY, target: item };
   }
 
   function closeMenu() {
     menu = null;
-  }
-
-  function addFromMenu() {
-    menu = null;
-    onAdd();
   }
 </script>
 
@@ -95,13 +79,14 @@
     {pageIndex}
     {pageCount}
     enableMerge={true}
+    scope="page"
     {onActivate}
-    {onDragOutcome}
+    {onEvent}
     {onGridContextMenu}
     hitRoot={hitRoot ?? slotEl}
   />
 
-  {#if pageCount > 1 && onPageChange}
+  {#if pageCount > 1}
     <div class="dots" role="tablist" aria-label="App 页">
       {#each Array.from({ length: pageCount }, (_, i) => i) as i}
         <button
@@ -109,7 +94,7 @@
           class="dot"
           class:active={i === pageIndex}
           aria-label={`第 ${i + 1} 页`}
-          onclick={() => onPageChange(i)}
+          onclick={() => onEvent({ type: 'setPageIndex', pageIndex: i })}
         ></button>
       {/each}
     </div>
@@ -118,11 +103,7 @@
 </div>
 
 {#if menu}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="menu-backdrop" onclick={closeMenu} role="presentation" transition:fade={{ duration: 120 }}></div>
-  <div class="ctx-menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`} role="menu" transition:fade={{ duration: 120 }}>
-    <button type="button" role="menuitem" onclick={addFromMenu}>添加 App</button>
-  </div>
+  <CtxMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
 {/if}
 
 <style>
@@ -156,37 +137,5 @@
   }
   .dot.active {
     background: #fff;
-  }
-  .menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-  }
-  .ctx-menu {
-    position: fixed;
-    z-index: 61;
-    min-width: 132px;
-    padding: 0.3rem;
-    border-radius: 10px;
-    background: rgba(32, 32, 36, 0.72);
-    backdrop-filter: blur(18px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-  }
-  .ctx-menu button {
-    appearance: none;
-    width: 100%;
-    border: 0;
-    background: transparent;
-    color: #f5f5f7;
-    text-align: left;
-    padding: 0.45rem 0.65rem;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  .ctx-menu button:hover {
-    background: rgba(255, 255, 255, 0.14);
   }
 </style>

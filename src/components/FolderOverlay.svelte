@@ -1,7 +1,8 @@
 <script lang="ts">
   import { fade, scale } from 'svelte/transition';
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
-  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
+  import type { AppGridEvent } from '../lib/appGrid';
+  import CtxMenu from './CtxMenu.svelte';
   import IconSortGrid from './IconSortGrid.svelte';
 
   let {
@@ -9,16 +10,17 @@
     onClose,
     onOpenApp,
     onRename,
-    onReorderChildren,
-    onEjectAt,
+    onEvent,
+    onEditApp,
+    onDeleteApp,
   }: {
     folder: FolderItem;
     onClose: () => void;
     onOpenApp: (app: AppItem) => void;
     onRename: (name: string) => void;
-    onReorderChildren: (folderId: string, children: AppItem[]) => void;
-    /** 拖出关窗后松手：按坐标落到主网格 */
-    onEjectAt: (folderId: string, appId: string, clientX: number, clientY: number) => void;
+    onEvent: (event: AppGridEvent) => void;
+    onEditApp: (app: AppItem) => void;
+    onDeleteApp: (app: AppItem) => void;
   } = $props();
 
   let editing = $state(false);
@@ -27,6 +29,7 @@
   let panelEl = $state<HTMLElement | null>(null);
   /** 拖出空白停住后：隐藏壳，拖拽浮层继续跟手 */
   let shellDismissed = $state(false);
+  let menu = $state<{ x: number; y: number; app: AppItem } | null>(null);
 
   function commitName() {
     editing = false;
@@ -36,25 +39,31 @@
   }
 
   function onActivate(item: GridItem) {
+    menu = null;
     if (item.kind === 'app') onOpenApp(item);
   }
 
-  function onDragOutcome(outcome: IconSortDragOutcome) {
-    switch (outcome.type) {
-      case 'reorder': {
-        const children = outcome.items.filter((i): i is AppItem => i.kind === 'app');
-        onReorderChildren(folder.id, children);
-        break;
-      }
-      case 'outsideDwell':
-        shellDismissed = true;
-        break;
-      case 'outsideDrop':
-        onEjectAt(folder.id, outcome.itemId, outcome.clientX, outcome.clientY);
-        break;
-      default:
-        // 文件夹内不处理合文件夹 / 翻页 / 会话快照。
-        break;
+  function onGridContextMenu(e: MouseEvent, item: GridItem | null) {
+    e.preventDefault();
+    if (item?.kind !== 'app') {
+      menu = null;
+      return;
+    }
+    menu = { x: e.clientX, y: e.clientY, app: item };
+  }
+
+  function onGridEvent(event: AppGridEvent) {
+    if (event.type === 'cancelDrag') {
+      shellDismissed = false;
+      onEvent(event);
+      return;
+    }
+    if (event.type === 'endDrag' || event.type === 'beginDrag') {
+      onEvent(event);
+      return;
+    }
+    if (event.type === 'reorderFolder' || event.type === 'eject') {
+      onEvent(event);
     }
   }
 </script>
@@ -64,6 +73,7 @@
   class="overlay"
   class:dismissed={shellDismissed}
   onclick={shellDismissed ? undefined : onClose}
+  oncontextmenu={(e) => e.preventDefault()}
   role="presentation"
   transition:fade={{ duration: 180 }}
 >
@@ -91,13 +101,29 @@
       items={folder.children}
       enableMerge={false}
       compact={true}
+      scope="folder"
       outsideRoot={panelEl}
       hitRoot={panelEl}
       {onActivate}
-      {onDragOutcome}
+      onEvent={onGridEvent}
+      onOutsideDwell={() => (shellDismissed = true)}
+      {onGridContextMenu}
     />
   </div>
 </div>
+
+{#if menu}
+  {@const app = menu.app}
+  <CtxMenu
+    x={menu.x}
+    y={menu.y}
+    onClose={() => (menu = null)}
+    items={[
+      { label: '编辑', icon: 'edit', onPick: () => onEditApp(app) },
+      { label: '删除', icon: 'delete', danger: true, onPick: () => onDeleteApp(app) },
+    ]}
+  />
+{/if}
 
 <style>
   .overlay {

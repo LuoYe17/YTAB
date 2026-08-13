@@ -138,27 +138,39 @@ export function createNoticeController(deps: NoticeControllerDeps = {}) {
       fn(view());
       return () => {
         listeners.delete(fn);
+        // 没人渲染了，退场动画永远播不完；就地收掉，别让下次挂载把它又演一遍。
+        if (listeners.size === 0 && phase === 'out') {
+          clearHold();
+          shown = null;
+          pending = null;
+        }
       };
     },
 
-    /** 宿主卸载时掐掉未开火的定时器。 */
+    /** 丢掉全部状态与定时器。测试用；生产的单例活到页面关掉。 */
     dispose(): void {
       clearHold();
       listeners.clear();
+      shown = null;
+      pending = null;
+      phase = 'in';
     },
   };
 }
 
 const controller = createNoticeController();
 
+/** 订阅要渲染的 view；立即回放一次，便于挂载时赶上已有通知。返回退订函数。 */
 export function subscribeNotice(fn: (view: NoticeView) => void): () => void {
   return controller.subscribe(fn);
 }
 
+/** 滑入一条新通知；已有的会被顶掉（先右溜再从左边入），同文案只续时。 */
 export function showNotice(input: Omit<Notice, 'id'>): void {
   controller.show(input);
 }
 
+/** 关掉当前条。传 id 时只关这一条，避免迟到的 2s 定时误关下一条。 */
 export function dismissNotice(id?: number): void {
   controller.dismiss(id);
 }
@@ -168,7 +180,7 @@ export function plainNotice(tone: NoticeTone, text: string): void {
   controller.show({ tone, before: text });
 }
 
-/** 宿主把 animationend 的动画名转回来。 */
+/** 宿主把 animationend 的动画名转回来；只有右溜结束才会真正卸下卡片。 */
 export function noticeAnimationEnded(name: string): void {
   controller.animationEnded(name);
 }

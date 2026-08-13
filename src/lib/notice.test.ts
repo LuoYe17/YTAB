@@ -116,7 +116,7 @@ describe('notice controller', () => {
     expect(h.view().notice).toMatchObject({ before: '第三条' });
   });
 
-  it('退场途中收到同文案会回弹并续时', () => {
+  it('退场途中收到同文案会回弹并重新计时', () => {
     const h = harness();
     h.controller.show({ tone: 'fail', before: '一言没换成' });
     h.advance(HOLD);
@@ -125,8 +125,35 @@ describe('notice controller', () => {
     h.controller.show({ tone: 'fail', before: '一言没换成' });
     expect(h.view().phase).toBe('in');
 
+    // 计时从头算：不重排的话这里早该退场了
     h.advance(HOLD - 1);
     expect(h.view().phase).toBe('in');
+    h.advance(1);
+    expect(h.view().phase).toBe('out');
+  });
+
+  it('宿主卸载时若正在退场，就地收掉，不留给下次挂载重播', () => {
+    const h = harness();
+    h.controller.show({ tone: 'ok', before: '已导出' });
+    h.advance(HOLD);
+    expect(h.view().phase).toBe('out');
+
+    h.unsubscribe();
+    const replayed: NoticeView[] = [];
+    h.controller.subscribe((v) => replayed.push(v));
+
+    expect(replayed[0]?.notice).toBeNull();
+  });
+
+  it('还在进场时卸载，通知留着，下次挂载还能看到', () => {
+    const h = harness();
+    h.controller.show({ tone: 'ok', before: '已导出' });
+
+    h.unsubscribe();
+    const replayed: NoticeView[] = [];
+    h.controller.subscribe((v) => replayed.push(v));
+
+    expect(replayed[0]).toMatchObject({ phase: 'in', notice: { before: '已导出' } });
   });
 
   it('旧条的迟到定时器收不走新条', () => {
@@ -183,13 +210,15 @@ describe('notice controller', () => {
     expect(h.view().phase).toBe('out');
   });
 
-  it('dispose 后迟到的定时器不再开火', () => {
+  it('dispose 清掉定时器与状态，之后再订阅是干净的', () => {
     const h = harness();
     h.controller.show({ tone: 'ok', before: '已导出' });
     h.controller.dispose();
-
     expect(h.pending()).toBe(0);
+
     h.advance(HOLD * 2);
-    expect(h.view().phase).toBe('in');
+    const after: NoticeView[] = [];
+    h.controller.subscribe((v) => after.push(v));
+    expect(after[0]).toEqual({ notice: null, phase: 'in' });
   });
 });

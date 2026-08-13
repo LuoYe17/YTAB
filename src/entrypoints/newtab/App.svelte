@@ -12,29 +12,13 @@
   import WallpaperStage from '../../components/WallpaperStage.svelte';
   import GhostTip from '../../components/GhostTip.svelte';
   import {
-    addApp as gridAddApp,
-    beginDragSession,
-    cancelDragSession,
-    currentPageItems as gridCurrentPageItems,
-    dropIntoFolder as gridDropIntoFolder,
-    ejectFromFolderAt as gridEjectFromFolderAt,
-    mergeApps as gridMergeApps,
-    openFolderItem as gridOpenFolderItem,
-    pageFlipDuringDrag as gridPageFlipDuringDrag,
+    apply,
+    createAppGridView,
+    currentPageItems,
     paginate,
-    removeApp as gridRemoveApp,
-    removeFolder as gridRemoveFolder,
-    renameFolder as gridRenameFolder,
-    reorderFolderChildren as gridReorderFolderChildren,
-    reorderPage as gridReorderPage,
-    updateApp as gridUpdateApp,
-    type AppGridDragSnapshot,
+    type AppGridEvent,
     type AppGridView,
   } from '../../lib/appGrid';
-  import {
-    insertIndexForDropBand,
-    readGridMetrics,
-  } from '../../lib/gridInsertGeometry';
   import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
   import { applyBundledIcons, bundledIconDataUrls } from '../../lib/appIcons';
@@ -42,8 +26,6 @@
   import {
     createEmptyState,
     type AppItem,
-    type FolderItem,
-    type GridItem,
     type HitokotoState,
     type Settings,
     type WallpaperState,
@@ -63,14 +45,12 @@
   let ready = $state(false);
   let loadFailed = $state(false);
   let ytab = $state(createEmptyState());
-  let pageIndex = $state(0);
+  /** live pages 只在这里；persist 时才写回 ytab.pages */
+  let grid = $state<AppGridView>(createAppGridView());
   let settingsOpen = $state(false);
   let settingsHighlight = $state<WallpaperFailFocus | null>(null);
   let addOpen = $state(false);
   let editingApp = $state<AppItem | null>(null);
-  let openFolder = $state<FolderItem | null>(null);
-  /** Esc / 取消跨页拖时整表回滚 */
-  let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
   /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
   let mainEl = $state<HTMLElement | null>(null);
@@ -108,6 +88,7 @@
       }
       localStorage.setItem('ytab:icon-bundle-v10', '1');
     }
+    grid = createAppGridView(ytab.pages, 0);
     displayUrl = ytab.wallpaper.imageUrl;
     ready = true;
     if (!ytab.onboardingDone) return;
@@ -183,24 +164,12 @@
     return new Promise<void>((r) => setTimeout(r, ms));
   }
 
-  function gridView(): AppGridView {
-    return {
-      pages: ytab.pages,
-      pageIndex,
-      openFolder,
-      dragSnapshot: dragPagesSnapshot,
-    };
-  }
-
-  function applyGridView(next: AppGridView) {
-    pageIndex = next.pageIndex;
-    openFolder = next.openFolder;
-    dragPagesSnapshot = next.dragSnapshot;
-  }
-
-  async function applyGrid(next: AppGridView) {
-    applyGridView(next);
-    await persist((prev) => ({ ...prev, pages: next.pages }));
+  function dispatchGrid(event: AppGridEvent) {
+    const { view, persist: write } = apply(grid, event);
+    grid = view;
+    if (write) {
+      void persist((prev) => ({ ...prev, pages: view.pages }));
+    }
   }
 
   async function onFirstRun(result: {
@@ -225,15 +194,12 @@
       }
       return next;
     });
+    grid = createAppGridView(paginate(result.apps), 0);
     if (result.wallpaper) {
       displayUrl = result.wallpaper.imageUrl;
       wallpaperPool.rememberCurrent(result.wallpaper.wallhavenId);
     }
     schedulePoolFill(ytab.settings);
-  }
-
-  function currentPageItems(): GridItem[] {
-    return gridCurrentPageItems(gridView());
   }
 
   function openApp(app: AppItem) {
@@ -244,107 +210,16 @@
     }
   }
 
-  async function addApp(app: AppItem) {
-    await applyGrid(gridAddApp(gridView(), app));
+  function addApp(app: AppItem) {
+    dispatchGrid({ type: 'add', app });
     addOpen = false;
     editingApp = null;
   }
 
-  async function saveEditedApp(app: AppItem) {
-    await applyGrid(gridUpdateApp(gridView(), app));
+  function saveEditedApp(app: AppItem) {
+    dispatchGrid({ type: 'update', app });
     editingApp = null;
     addOpen = false;
-  }
-
-  async function deleteApp(app: AppItem) {
-    await applyGrid(gridRemoveApp(gridView(), app.id));
-  }
-
-  async function deleteFolder(folder: FolderItem) {
-    await applyGrid(gridRemoveFolder(gridView(), folder.id));
-  }
-
-  async function mergeApps(fromId: string, ontoId: string, folderId: string) {
-    await applyGrid(gridMergeApps(gridView(), fromId, ontoId, folderId));
-  }
-
-  async function dropIntoFolder(appId: string, folderId: string) {
-    await applyGrid(gridDropIntoFolder(gridView(), appId, folderId));
-  }
-
-  async function reorderPage(pageItems: GridItem[]) {
-    await applyGrid(gridReorderPage(gridView(), pageItems));
-  }
-
-  function onGridDragSessionStart() {
-    applyGridView(beginDragSession(gridView()));
-  }
-
-  async function onGridDragSessionCancel() {
-    if (!dragPagesSnapshot) return;
-    await applyGrid(cancelDragSession(gridView()));
-  }
-
-  async function pageFlipDuringDrag(
-    toPage: number,
-    fromPageWithoutItem: GridItem[],
-    item: GridItem,
-  ) {
-    await applyGrid(gridPageFlipDuringDrag(gridView(), toPage, fromPageWithoutItem, item));
-  }
-
-  async function reorderFolderChildren(folderId: string, children: AppItem[]) {
-    await applyGrid(gridReorderFolderChildren(gridView(), folderId, children));
-  }
-
-  async function openFolderItem(folder: FolderItem) {
-    const next = gridOpenFolderItem(gridView(), folder);
-    if (folder.children.length <= 1) {
-      await applyGrid(next);
-      return;
-    }
-    applyGridView(next);
-  }
-
-  /** 文件夹拖出关窗后松手：按落点插入当前页 */
-  async function ejectFromFolderAt(
-    folderId: string,
-    appId: string,
-    clientX: number,
-    clientY: number,
-  ) {
-    const page = ytab.pages[pageIndex] ?? [];
-    const insertAt = insertIndexOnPage(page, clientX, clientY, appId);
-    await applyGrid(gridEjectFromFolderAt(gridView(), folderId, appId, insertAt));
-  }
-
-  /** 主网格落点：格子 + 左壁纸→首位 + 下/右→末尾。 */
-  function insertIndexOnPage(
-    page: GridItem[],
-    clientX: number,
-    clientY: number,
-    excludeId: string,
-  ): number {
-    const grid = document.querySelector<HTMLElement>('[data-ytab-grid="page"]');
-    const slot = document.querySelector<HTMLElement>('[data-ytab-drop-band]');
-    const m = grid ? readGridMetrics(grid) : null;
-    const host = slot ?? grid;
-    if (m && host) {
-      const occupied = page.filter((i) => i.id !== excludeId).length;
-      const br = host.getBoundingClientRect();
-      const at = insertIndexForDropBand(clientX, clientY, m, occupied, 'after', {
-        left: br.left,
-        top: br.top,
-        right: br.right,
-        bottom: br.bottom,
-      });
-      if (at != null) return at;
-    }
-    return page.length;
-  }
-
-  async function renameFolder(folderId: string, name: string) {
-    await applyGrid(gridRenameFolder(gridView(), folderId, name));
   }
 
   async function onSettingsChange(settings: Settings) {
@@ -367,12 +242,13 @@
     displayUrl = next.wallpaper.imageUrl;
     settingsOpen = false;
     settingsHighlight = null;
-    pageIndex = 0;
+    grid = createAppGridView(next.pages, 0);
     schedulePoolFill(next.settings);
   }
 
   async function onExportBackup(opts: { includeIcons: boolean; includeApiKey: boolean }) {
-    const blob = await exportYtab($state.snapshot(ytab), opts);
+    const snap = $state.snapshot(ytab);
+    const blob = await exportYtab({ ...snap, pages: $state.snapshot(grid).pages }, opts);
     downloadBlob(blob, `ytab-backup-${new Date().toISOString().slice(0, 10)}.ytab`);
   }
 
@@ -387,8 +263,7 @@
     displayUrl = '';
     settingsOpen = false;
     settingsHighlight = null;
-    pageIndex = 0;
-    openFolder = null;
+    grid = createAppGridView();
     addOpen = false;
     editingApp = null;
     plainNotice('ok', '已重置');
@@ -414,12 +289,10 @@
       {#if ytab.onboardingDone}
         <div class="grid-slot">
           <AppGrid
-            items={currentPageItems()}
-            pageIndex={pageIndex}
-            pageCount={ytab.pages.length}
+            items={currentPageItems(grid)}
+            pageIndex={grid.pageIndex}
+            pageCount={grid.pages.length}
             onOpenApp={openApp}
-            onOpenFolder={openFolderItem}
-            onPageChange={(i) => (pageIndex = i)}
             onAdd={() => {
               editingApp = null;
               addOpen = true;
@@ -428,17 +301,8 @@
               addOpen = false;
               editingApp = app;
             }}
-            onDeleteApp={deleteApp}
-            onDeleteFolder={deleteFolder}
+            onEvent={dispatchGrid}
             hitRoot={mainEl}
-            dnd={{
-              onMerge: mergeApps,
-              onDropIntoFolder: dropIntoFolder,
-              onReorderPage: reorderPage,
-              onPageFlip: pageFlipDuringDrag,
-              onDragSessionStart: onGridDragSessionStart,
-              onDragSessionCancel: onGridDragSessionCancel,
-            }}
           />
         </div>
       {/if}
@@ -511,19 +375,20 @@
     />
   {/if}
 
-  {#if openFolder}
+  {#if grid.openFolder}
     <FolderOverlay
-      folder={openFolder}
-      onClose={() => (openFolder = null)}
+      folder={grid.openFolder}
+      onClose={() => dispatchGrid({ type: 'closeFolder' })}
       onOpenApp={openApp}
-      onRename={(name) => renameFolder(openFolder!.id, name)}
-      onReorderChildren={reorderFolderChildren}
-      onEjectAt={ejectFromFolderAt}
+      onRename={(name) =>
+        dispatchGrid({ type: 'renameFolder', folderId: grid.openFolder!.id, name })
+      }
+      onEvent={dispatchGrid}
       onEditApp={(app) => {
         addOpen = false;
         editingApp = app;
       }}
-      onDeleteApp={deleteApp}
+      onDeleteApp={(app) => dispatchGrid({ type: 'removeApp', appId: app.id })}
     />
   {/if}
   {/if}

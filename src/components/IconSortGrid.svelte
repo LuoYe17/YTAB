@@ -1,9 +1,9 @@
 <script lang="ts">
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
-  import type { FolderItem, GridItem } from '../lib/types';
+  import type { GridItem } from '../lib/types';
+  import type { AppGridEvent } from '../lib/appGrid';
   import { bundledIconUrl, displayAppIcon, tileIconSrc } from '../lib/appIcons';
-  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import {
     cellHit,
     hitEdgeRelative,
@@ -21,7 +21,8 @@
     pageIndex = 0,
     pageCount = 1,
     onActivate,
-    onDragOutcome,
+    onEvent,
+    onOutsideDwell,
     onGridContextMenu,
     outsideRoot = null,
     hitRoot = null,
@@ -33,7 +34,9 @@
     pageIndex?: number;
     pageCount?: number;
     onActivate: (item: GridItem) => void;
-    onDragOutcome: (outcome: IconSortDragOutcome) => void;
+    onEvent: (event: AppGridEvent) => void;
+    /** 拖出壳外停住：只关视觉壳，不是 App 网格事件 */
+    onOutsideDwell?: () => void;
     onGridContextMenu?: (e: MouseEvent, item: GridItem | null) => void;
     /** 指针拖出此元素外并停住 → 仅视觉关窗，拖拽继续跟手 */
     outsideRoot?: HTMLElement | null;
@@ -49,15 +52,12 @@
   const PAGE_FLIP_DWELL_MS = 400;
   const PAGE_FLIP_COOLDOWN_MS = 650;
 
-  let localItems = $state<GridItem[]>([]);
   let activeId = $state<string | null>(null);
   let dwellTargetId = $state<string | null>(null);
   let mergeReady = $state(false);
   let pointer = $state({ x: 0, y: 0 });
   let suppressClick = $state(false);
-  let orderDirty = $state(false);
   let edgeSide = $state<'left' | 'right' | null>(null);
-  let didFlip = $state(false);
   /** 已触发「拖出关窗」，拖拽会话仍继续 */
   let outsideLocked = false;
 
@@ -68,34 +68,8 @@
   let pendingInsert: { sourceId: string; targetId: string; insertAt: number } | null = null;
   let pendingEdge: 'left' | 'right' | null = null;
   let lastInsertKey = '';
-  let orderAtDragStart: string[] = [];
   let flipCooldownUntil = 0;
   let gridEl = $state<HTMLElement | null>(null);
-  /** 合文件夹后先改本地再等 props，避免先闪回再顺切。 */
-  let holdLocal = false;
-
-  $effect(() => {
-    if (activeId) {
-      // 拖拽中仅在跨页后（集合变了且仍含 active）才同步 props
-      const propIds = new Set(items.map((i) => i.id));
-      const localIds = new Set(localItems.map((i) => i.id));
-      const sameSet = propIds.size === localIds.size && [...propIds].every((id) => localIds.has(id));
-      if (!sameSet && propIds.has(activeId)) {
-        localItems = items.map((i) => i);
-        lastInsertKey = '';
-        orderDirty = false;
-        orderAtDragStart = localItems.map((i) => i.id);
-      }
-      return;
-    }
-    if (holdLocal) {
-      const localIds = new Set(localItems.map((i) => i.id));
-      const propsMatch = items.length === localItems.length && items.every((i) => localIds.has(i.id));
-      if (!propsMatch) return;
-      holdLocal = false;
-    }
-    localItems = items.map((i) => i);
-  });
 
   function clearDwell() {
     if (dwellTimer) clearTimeout(dwellTimer);
@@ -123,7 +97,7 @@
   }
 
   function activeItem(): GridItem | null {
-    return localItems.find((i) => i.id === activeId) ?? null;
+    return items.find((i) => i.id === activeId) ?? null;
   }
 
   function canMerge(source: GridItem, target: GridItem): boolean {
@@ -134,8 +108,8 @@
   }
 
   function startDwell(sourceId: string, targetId: string) {
-    const source = localItems.find((i) => i.id === sourceId);
-    const target = localItems.find((i) => i.id === targetId);
+    const source = items.find((i) => i.id === sourceId);
+    const target = items.find((i) => i.id === targetId);
     if (!source || !target || !canMerge(source, target)) {
       clearDwell();
       return;
@@ -150,18 +124,18 @@
   }
 
   function insertBeforeIndex(sourceId: string, insertAt: number): boolean {
-    const from = localItems.findIndex((i) => i.id === sourceId);
+    const from = items.findIndex((i) => i.id === sourceId);
     if (from < 0) return false;
     let to = insertAt;
     if (from < to) to -= 1;
-    to = Math.max(0, Math.min(to, localItems.length - 1));
+    to = Math.max(0, Math.min(to, items.length - 1));
     if (from === to) return false;
-    const next = [...localItems];
+    const next = [...items];
     const [moved] = next.splice(from, 1);
     if (!moved) return false;
     next.splice(to, 0, moved);
-    localItems = next;
-    orderDirty = true;
+    const order = next.map((i) => i.id);
+    onEvent(compact ? { type: 'reorderFolder', order } : { type: 'reorderPage', order });
     return true;
   }
 
@@ -214,18 +188,11 @@
     if (!item) return;
     const toPage = pageIndex + (side === 'left' ? -1 : 1);
     if (toPage < 0 || toPage >= pageCount) return;
-    const fromWithout = localItems.filter((i) => i.id !== activeId);
     clearEdgePending();
     clearDwell();
     clearInsertPending();
     flipCooldownUntil = Date.now() + PAGE_FLIP_COOLDOWN_MS;
-    didFlip = true;
-    onDragOutcome({
-      type: 'pageFlip',
-      toPage,
-      fromPageWithoutItem: fromWithout,
-      item,
-    });
+    onEvent({ type: 'pageFlip', toPage });
   }
 
   /** @returns true 若指针在翻页热区（并处理计时） */
@@ -298,7 +265,7 @@
       clearDwell();
       clearInsertPending();
       clearEdgePending();
-      onDragOutcome({ type: 'outsideDwell' });
+      onOutsideDwell?.();
     }, OUTSIDE_DWELL_MS);
     return true;
   }
@@ -306,16 +273,13 @@
   function onDragStart(event: { operation: { source?: { id: string | number } | null } }) {
     activeId = String(event.operation.source?.id ?? '');
     lastInsertKey = '';
-    orderDirty = false;
-    didFlip = false;
     outsideLocked = false;
-    orderAtDragStart = localItems.map((i) => i.id);
     clearInsertPending();
     clearDwell();
     clearEdgePending();
     clearOutsidePending();
     suppressClick = false;
-    onDragOutcome({ type: 'sessionStart' });
+    onEvent({ type: 'beginDrag', itemId: activeId });
     window.addEventListener('pointermove', onPointerTrack, { passive: true });
   }
 
@@ -358,15 +322,15 @@
     const m = gridEl ? readGridMetrics(gridEl) : null;
     if (m) {
       const cell = cellHit(x, y, m);
-      if (cell && cell.index < localItems.length) {
-        const targetId = localItems[cell.index]?.id ?? null;
+      if (cell && cell.index < items.length) {
+        const targetId = items[cell.index]?.id ?? null;
         if (!targetId || sourceId === targetId) {
           clearDwell();
           clearInsertPending();
           return;
         }
-        const source = localItems.find((i) => i.id === sourceId);
-        const target = localItems.find((i) => i.id === targetId);
+        const source = items.find((i) => i.id === sourceId);
+        const target = items.find((i) => i.id === targetId);
         if (!source || !target) {
           clearDwell();
           clearInsertPending();
@@ -397,7 +361,7 @@
         x,
         y,
         m,
-        localItems.length,
+        items.length,
         'skip',
         { left: br.left, top: br.top, right: br.right, bottom: br.bottom },
       );
@@ -421,8 +385,8 @@
       return;
     }
 
-    const source = localItems.find((i) => i.id === sourceId);
-    const target = localItems.find((i) => i.id === targetId);
+    const source = items.find((i) => i.id === sourceId);
+    const target = items.find((i) => i.id === targetId);
     if (!source || !target) {
       clearDwell();
       clearInsertPending();
@@ -438,7 +402,7 @@
 
     clearDwell();
     const insertAt = insertIndexFromHit(
-      localItems.findIndex((i) => i.id === targetId),
+      items.findIndex((i) => i.id === targetId),
       hitEdgeRelative(nx, ny),
       'skip',
     );
@@ -469,66 +433,49 @@
     }, 0);
 
     if (wasOutside) {
-      orderDirty = false;
-      didFlip = false;
       if (event.canceled || !sourceId) return;
-      onDragOutcome({
-        type: 'outsideDrop',
-        itemId: sourceId,
-        clientX: dropX,
-        clientY: dropY,
-      });
+      onEvent({ type: 'eject', appId: sourceId, insertAt: insertAtOnPage(dropX, dropY, sourceId) });
       return;
     }
 
     if (event.canceled) {
-      onDragOutcome({ type: 'sessionCancel' });
-      orderDirty = false;
-      didFlip = false;
+      onEvent({ type: 'cancelDrag' });
       return;
     }
 
     if (ready && sourceId && dwellId && enableMerge) {
-      const source = localItems.find((i) => i.id === sourceId) ?? items.find((i) => i.id === sourceId);
-      const target = localItems.find((i) => i.id === dwellId) ?? items.find((i) => i.id === dwellId);
+      const source = items.find((i) => i.id === sourceId);
+      const target = items.find((i) => i.id === dwellId);
       if (source?.kind === 'app' && target?.kind === 'app') {
-        const folderId = crypto.randomUUID();
-        const folder: FolderItem = {
-          id: folderId,
-          kind: 'folder',
-          name: '文件夹',
-          children: [target, source],
-        };
-        holdLocal = true;
-        localItems = localItems
-          .filter((i) => i.id !== sourceId)
-          .map((i) => (i.id === dwellId ? folder : i));
-        onDragOutcome({ type: 'merge', fromId: sourceId, ontoId: dwellId, folderId });
+        onEvent({ type: 'merge', fromId: sourceId, ontoId: dwellId });
       } else if (source?.kind === 'app' && target?.kind === 'folder') {
-        holdLocal = true;
-        localItems = localItems
-          .filter((i) => i.id !== sourceId)
-          .map((i) =>
-            i.id === dwellId && i.kind === 'folder'
-              ? { ...i, children: [...i.children, source] }
-              : i,
-          );
-        onDragOutcome({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
+        onEvent({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
       }
-      orderDirty = false;
-      didFlip = false;
       return;
     }
 
-    if (orderDirty || didFlip) {
-      const same =
-        !didFlip &&
-        localItems.length === orderAtDragStart.length &&
-        localItems.every((item, i) => item.id === orderAtDragStart[i]);
-      if (!same) onDragOutcome({ type: 'reorder', items: localItems });
-    }
-    orderDirty = false;
-    didFlip = false;
+    onEvent({ type: 'endDrag' });
+  }
+
+  /** 从文件夹拖出落到主网格；中心算插入（已经不会合文件夹）。 */
+  function insertAtOnPage(clientX: number, clientY: number, excludeId: string): number {
+    const pageGrid = document.querySelector<HTMLElement>('[data-ytab-grid="page"]');
+    const slot = document.querySelector<HTMLElement>('[data-ytab-drop-band]');
+    const m = pageGrid ? readGridMetrics(pageGrid) : null;
+    const host = slot ?? pageGrid;
+    if (!m || !host) return 0;
+    const occupied = [...pageGrid!.querySelectorAll('[data-tile-id]')].filter(
+      (el) => el.getAttribute('data-tile-id') !== excludeId,
+    ).length;
+    const br = host.getBoundingClientRect();
+    return (
+      insertIndexForDropBand(clientX, clientY, m, occupied, 'after', {
+        left: br.left,
+        top: br.top,
+        right: br.right,
+        bottom: br.bottom,
+      }) ?? occupied
+    );
   }
 
   function onTileActivate(item: GridItem) {
@@ -540,7 +487,7 @@
     if (!onGridContextMenu) return;
     e.preventDefault();
     const id = (e.target as HTMLElement | null)?.closest('[data-tile-id]')?.getAttribute('data-tile-id');
-    const item = id ? (localItems.find((i) => i.id === id) ?? null) : null;
+    const item = id ? (items.find((i) => i.id === id) ?? null) : null;
     onGridContextMenu(e, item);
   }
 </script>
@@ -555,7 +502,7 @@
     role="presentation"
     oncontextmenu={onContextMenu}
   >
-    {#each localItems as item (item.id)}
+    {#each items as item (item.id)}
       <div animate:flip={{ duration: flipMs }}>
         <GridTile
           {item}

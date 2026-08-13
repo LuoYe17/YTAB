@@ -1,17 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  addApp,
-  beginDragSession,
-  cancelDragSession,
-  createAppGridView,
-  ejectFromFolderAt,
-  mergeApps,
-  openFolderItem,
-  removeApp,
-  removeFolder,
-  reorderFolderChildren,
-  updateApp,
-} from './appGrid';
+import { apply, createAppGridView } from './appGrid';
 import type { AppItem, FolderItem } from './types';
 
 function app(id: string, name = id): AppItem {
@@ -22,36 +10,75 @@ function folder(id: string, children: AppItem[]): FolderItem {
   return { id, kind: 'folder', name: '文件夹', children };
 }
 
-describe('appGrid', () => {
-  it('合文件夹：两个 App 收进同一文件夹', () => {
-    const a = app('a');
-    const b = app('b');
-    const view = createAppGridView([[a, b]]);
-    const next = mergeApps(view, 'a', 'b', 'folder-1');
+function idsOf(view: ReturnType<typeof createAppGridView>): string[] {
+  return view.pages.flat().map((i) => i.id);
+}
+
+describe('apply', () => {
+  it('合文件夹：两个 App 收进同一文件夹，发 id，松手 persist', () => {
+    const view = createAppGridView([[app('a'), app('b')]]);
+    const began = apply(view, { type: 'beginDrag', itemId: 'a' });
+    expect(began.persist).toBe(false);
+    const { view: next, persist } = apply(began.view, { type: 'merge', fromId: 'a', ontoId: 'b' });
+    expect(persist).toBe(true);
     expect(next.pages).toHaveLength(1);
     expect(next.pages[0]).toHaveLength(1);
     const f = next.pages[0]![0]!;
     expect(f.kind).toBe('folder');
     if (f.kind !== 'folder') return;
-    expect(f.id).toBe('folder-1');
+    expect(f.id.length).toBeGreaterThan(0);
     expect(f.children.map((c) => c.id)).toEqual(['b', 'a']);
     expect(next.dragSnapshot).toBeNull();
+    expect(next.activeId).toBeNull();
   });
 
-  it('只剩 1 个 App 时自动拆开文件夹', () => {
+  it('跨页拖：翻页不 persist，松手才 persist', () => {
+    const view = createAppGridView([[app('a'), app('b')], [app('c')]], 0);
+    const began = apply(view, { type: 'beginDrag', itemId: 'a' });
+    const flipped = apply(began.view, { type: 'pageFlip', toPage: 1 });
+    expect(flipped.persist).toBe(false);
+    expect(flipped.view.pageIndex).toBe(1);
+    expect(flipped.view.dragSnapshot).not.toBeNull();
+    expect(flipped.view.pages[0]!.map((i) => i.id)).toEqual(['b']);
+    expect(flipped.view.pages[1]!.map((i) => i.id)).toEqual(['c', 'a']);
+    const ended = apply(flipped.view, { type: 'endDrag' });
+    expect(ended.persist).toBe(true);
+    expect(ended.view.dragSnapshot).toBeNull();
+    expect(ended.view.pages[1]!.map((i) => i.id)).toEqual(['c', 'a']);
+  });
+
+  it('拖着换位不 persist；Esc 回滚且不 persist', () => {
+    const view = createAppGridView([[app('a'), app('b')]], 0);
+    const began = apply(view, { type: 'beginDrag', itemId: 'a' });
+    const moved = apply(began.view, { type: 'reorderPage', order: ['b', 'a'] });
+    expect(moved.persist).toBe(false);
+    expect(idsOf(moved.view)).toEqual(['b', 'a']);
+    const canceled = apply(moved.view, { type: 'cancelDrag' });
+    expect(canceled.persist).toBe(false);
+    expect(idsOf(canceled.view)).toEqual(['a', 'b']);
+    expect(canceled.view.pageIndex).toBe(0);
+    expect(canceled.view.dragSnapshot).toBeNull();
+  });
+
+  it('文件夹内换位写入 pages 并 persist', () => {
     const a = app('a');
     const b = app('b');
     const f = folder('f', [a, b]);
     const view = { ...createAppGridView([[f]]), openFolder: f };
-    const next = reorderFolderChildren(view, 'f', [a]);
-    expect(next.pages[0]).toEqual([a]);
-    expect(next.openFolder).toBeNull();
+    const { view: next, persist } = apply(view, { type: 'reorderFolder', order: ['b', 'a'] });
+    expect(persist).toBe(true);
+    const item = next.pages[0]![0]!;
+    expect(item.kind).toBe('folder');
+    if (item.kind !== 'folder') return;
+    expect(item.children.map((c) => c.id)).toEqual(['b', 'a']);
+    expect(next.openFolder?.children.map((c) => c.id)).toEqual(['b', 'a']);
   });
 
   it('打开只含 1 个 App 的文件夹时直接拆开', () => {
     const a = app('a');
     const f = folder('f', [a]);
-    const next = openFolderItem(createAppGridView([[f]]), f);
+    const { view: next, persist } = apply(createAppGridView([[f]]), { type: 'openFolder', folderId: 'f' });
+    expect(persist).toBe(true);
     expect(next.pages[0]).toEqual([a]);
     expect(next.openFolder).toBeNull();
   });
@@ -61,18 +88,11 @@ describe('appGrid', () => {
     const b = app('b');
     const c = app('c');
     const f = folder('f', [a, b]);
-    const view = {
-      ...createAppGridView([[f, c]]),
-      openFolder: f,
-    };
-    const next = ejectFromFolderAt(view, 'f', 'a', 1);
+    const view = { ...createAppGridView([[f, c]]), openFolder: f };
+    const { view: next, persist } = apply(view, { type: 'eject', appId: 'a', insertAt: 1 });
+    expect(persist).toBe(true);
     expect(next.openFolder).toBeNull();
-    // f 拆成只剩 b；a 插入 index 1（在 b 与 c 之间，或视 collapse 后页内容）
-    const ids = next.pages[0]!.map((i) => i.id);
-    expect(ids).toContain('a');
-    expect(ids).toContain('b');
-    expect(ids).toContain('c');
-    expect(ids.indexOf('a')).toBe(1);
+    expect(next.pages[0]!.map((i) => i.id)).toEqual(['b', 'a', 'c']);
   });
 
   it('编辑 App 保留 id，文件夹内外都能改', () => {
@@ -80,7 +100,8 @@ describe('appGrid', () => {
     const b = app('b');
     const f = folder('f', [a, b]);
     const view = { ...createAppGridView([[f]]), openFolder: f };
-    const next = updateApp(view, { ...a, name: '新' });
+    const { view: next, persist } = apply(view, { type: 'update', app: { ...a, name: '新' } });
+    expect(persist).toBe(true);
     const folderItem = next.pages[0]![0]!;
     expect(folderItem.kind).toBe('folder');
     if (folderItem.kind !== 'folder') return;
@@ -91,14 +112,20 @@ describe('appGrid', () => {
   it('删除网格上的 App，不把后页往前挤', () => {
     const page0 = Array.from({ length: 2 }, (_, i) => app(`p0-${i}`));
     const page1 = [app('keep')];
-    const next = removeApp(createAppGridView([page0, page1], 0), 'p0-0');
+    const { view: next } = apply(createAppGridView([page0, page1], 0), {
+      type: 'removeApp',
+      appId: 'p0-0',
+    });
     expect(next.pages).toHaveLength(2);
     expect(next.pages[0]!.map((i) => i.id)).toEqual(['p0-1']);
     expect(next.pages[1]!.map((i) => i.id)).toEqual(['keep']);
   });
 
   it('删空当前页则丢掉空页并夹住页码', () => {
-    const next = removeApp(createAppGridView([[app('a')], [app('b')]], 0), 'a');
+    const { view: next } = apply(createAppGridView([[app('a')], [app('b')]], 0), {
+      type: 'removeApp',
+      appId: 'a',
+    });
     expect(next.pages).toHaveLength(1);
     expect(next.pages[0]!.map((i) => i.id)).toEqual(['b']);
     expect(next.pageIndex).toBe(0);
@@ -109,32 +136,28 @@ describe('appGrid', () => {
     const b = app('b');
     const f = folder('f', [a, b]);
     const view = { ...createAppGridView([[f]]), openFolder: f };
-    const next = removeApp(view, 'a');
+    const { view: next } = apply(view, { type: 'removeApp', appId: 'a' });
     expect(next.pages[0]).toEqual([b]);
     expect(next.openFolder).toBeNull();
   });
 
   it('删除文件夹连同其中 App', () => {
     const f = folder('f', [app('a'), app('b')]);
-    const next = removeFolder({ ...createAppGridView([[f, app('c')]]), openFolder: f }, 'f');
+    const { view: next } = apply(
+      { ...createAppGridView([[f, app('c')]]), openFolder: f },
+      { type: 'removeFolder', folderId: 'f' },
+    );
     expect(next.pages[0]!.map((i) => i.id)).toEqual(['c']);
     expect(next.openFolder).toBeNull();
   });
 
-  it('Esc 回滚拖拽快照', () => {
-    const a = app('a');
-    const b = app('b');
-    let view = createAppGridView([[a, b]], 0);
-    view = beginDragSession(view);
-    view = addApp(view, app('c'));
-    expect(flattenIds(view)).toContain('c');
-    view = cancelDragSession(view);
-    expect(flattenIds(view)).toEqual(['a', 'b']);
-    expect(view.pageIndex).toBe(0);
-    expect(view.dragSnapshot).toBeNull();
+  it('开文件夹 / 翻页点不 persist', () => {
+    const f = folder('f', [app('a'), app('b')]);
+    const opened = apply(createAppGridView([[f], [app('c')]]), { type: 'openFolder', folderId: 'f' });
+    expect(opened.persist).toBe(false);
+    expect(opened.view.openFolder?.id).toBe('f');
+    const paged = apply(createAppGridView([[f], [app('c')]]), { type: 'setPageIndex', pageIndex: 1 });
+    expect(paged.persist).toBe(false);
+    expect(paged.view.pageIndex).toBe(1);
   });
 });
-
-function flattenIds(view: ReturnType<typeof createAppGridView>): string[] {
-  return view.pages.flat().map((i) => i.id);
-}

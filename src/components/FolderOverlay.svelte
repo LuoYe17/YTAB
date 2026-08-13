@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade, scale } from 'svelte/transition';
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
-  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
+  import type { AppGridEvent } from '../lib/appGrid';
   import CtxMenu from './CtxMenu.svelte';
   import IconSortGrid from './IconSortGrid.svelte';
 
@@ -10,8 +10,7 @@
     onClose,
     onOpenApp,
     onRename,
-    onReorderChildren,
-    onEjectAt,
+    onEvent,
     onEditApp,
     onDeleteApp,
   }: {
@@ -19,9 +18,7 @@
     onClose: () => void;
     onOpenApp: (app: AppItem) => void;
     onRename: (name: string) => void;
-    onReorderChildren: (folderId: string, children: AppItem[]) => void;
-    /** 拖出关窗后松手：按坐标落到主网格 */
-    onEjectAt: (folderId: string, appId: string, clientX: number, clientY: number) => void;
+    onEvent: (event: AppGridEvent) => void;
     onEditApp: (app: AppItem) => void;
     onDeleteApp: (app: AppItem) => void;
   } = $props();
@@ -55,22 +52,13 @@
     menu = { x: e.clientX, y: e.clientY, app: item };
   }
 
-  function onDragOutcome(outcome: IconSortDragOutcome) {
-    switch (outcome.type) {
-      case 'reorder': {
-        const children = outcome.items.filter((i): i is AppItem => i.kind === 'app');
-        onReorderChildren(folder.id, children);
-        break;
-      }
-      case 'outsideDwell':
-        shellDismissed = true;
-        break;
-      case 'outsideDrop':
-        onEjectAt(folder.id, outcome.itemId, outcome.clientX, outcome.clientY);
-        break;
-      default:
-        // 文件夹内不处理合文件夹 / 翻页 / 会话快照。
-        break;
+  function onGridEvent(event: AppGridEvent) {
+    if (event.type === 'endDrag' || event.type === 'beginDrag' || event.type === 'cancelDrag') {
+      onEvent(event);
+      return;
+    }
+    if (event.type === 'reorderFolder' || event.type === 'eject') {
+      onEvent(event);
     }
   }
 </script>
@@ -111,7 +99,8 @@
       outsideRoot={panelEl}
       hitRoot={panelEl}
       {onActivate}
-      {onDragOutcome}
+      onEvent={onGridEvent}
+      onOutsideDwell={() => (shellDismissed = true)}
       {onGridContextMenu}
     />
   </div>

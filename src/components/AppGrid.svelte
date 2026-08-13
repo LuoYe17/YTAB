@@ -1,44 +1,26 @@
 <script lang="ts">
-  import type { AppItem, FolderItem, GridItem } from '../lib/types';
-  import type { IconSortDragOutcome } from '../lib/iconSortDrag';
+  import type { AppItem, GridItem } from '../lib/types';
+  import type { AppGridEvent } from '../lib/appGrid';
   import CtxMenu from './CtxMenu.svelte';
   import IconSortGrid from './IconSortGrid.svelte';
-
-  /** 起始页对 App 网格拖拽结果的接线（由 IconSortDragOutcome 适配而来） */
-  export type AppGridDnd = {
-    onMerge: (fromId: string, ontoId: string, folderId: string) => void;
-    onDropIntoFolder: (appId: string, folderId: string) => void;
-    onReorderPage: (pageItems: GridItem[]) => void;
-    onPageFlip: (toPage: number, fromPageWithoutItem: GridItem[], item: GridItem) => void;
-    onDragSessionStart: () => void;
-    onDragSessionCancel: () => void;
-  };
 
   let {
     items,
     pageIndex = 0,
     pageCount = 1,
     onOpenApp,
-    onOpenFolder,
-    onPageChange,
     onAdd,
     onEditApp,
-    onDeleteApp,
-    onDeleteFolder,
-    dnd,
+    onEvent,
     hitRoot = null,
   }: {
     items: GridItem[];
     pageIndex?: number;
     pageCount?: number;
     onOpenApp: (app: AppItem) => void;
-    onOpenFolder: (folder: FolderItem) => void;
-    onPageChange?: (index: number) => void;
     onAdd: () => void;
     onEditApp: (app: AppItem) => void;
-    onDeleteApp: (app: AppItem) => void;
-    onDeleteFolder: (folder: FolderItem) => void;
-    dnd: AppGridDnd;
+    onEvent: (event: AppGridEvent) => void;
     /** 落点带；起始页传 main，这样时钟/搜索上方也能插到首位 */
     hitRoot?: HTMLElement | null;
   } = $props();
@@ -55,44 +37,28 @@
     if (target.kind === 'app') {
       return [
         { label: '编辑', icon: 'edit' as const, onPick: () => onEditApp(target) },
-        { label: '删除', icon: 'delete' as const, danger: true, onPick: () => onDeleteApp(target) },
+        {
+          label: '删除',
+          icon: 'delete' as const,
+          danger: true,
+          onPick: () => onEvent({ type: 'removeApp', appId: target.id }),
+        },
       ];
     }
     return [
-      { label: '删除', icon: 'delete' as const, danger: true, onPick: () => onDeleteFolder(target) },
+      {
+        label: '删除',
+        icon: 'delete' as const,
+        danger: true,
+        onPick: () => onEvent({ type: 'removeFolder', folderId: target.id }),
+      },
     ];
   });
 
   function onActivate(item: GridItem) {
     menu = null;
     if (item.kind === 'app') onOpenApp(item);
-    else onOpenFolder(item);
-  }
-
-  function onDragOutcome(outcome: IconSortDragOutcome) {
-    switch (outcome.type) {
-      case 'sessionStart':
-        dnd.onDragSessionStart();
-        break;
-      case 'sessionCancel':
-        dnd.onDragSessionCancel();
-        break;
-      case 'reorder':
-        dnd.onReorderPage(outcome.items);
-        break;
-      case 'merge':
-        dnd.onMerge(outcome.fromId, outcome.ontoId, outcome.folderId);
-        break;
-      case 'intoFolder':
-        dnd.onDropIntoFolder(outcome.appId, outcome.folderId);
-        break;
-      case 'pageFlip':
-        dnd.onPageFlip(outcome.toPage, outcome.fromPageWithoutItem, outcome.item);
-        break;
-      default:
-        // 主网格不处理文件夹拖出（outsideDwell / outsideDrop）。
-        break;
-    }
+    else onEvent({ type: 'openFolder', folderId: item.id });
   }
 
   function onGridContextMenu(e: MouseEvent, item: GridItem | null) {
@@ -114,12 +80,12 @@
     {pageCount}
     enableMerge={true}
     {onActivate}
-    {onDragOutcome}
+    {onEvent}
     {onGridContextMenu}
     hitRoot={hitRoot ?? slotEl}
   />
 
-  {#if pageCount > 1 && onPageChange}
+  {#if pageCount > 1}
     <div class="dots" role="tablist" aria-label="App 页">
       {#each Array.from({ length: pageCount }, (_, i) => i) as i}
         <button
@@ -127,7 +93,7 @@
           class="dot"
           class:active={i === pageIndex}
           aria-label={`第 ${i + 1} 页`}
-          onclick={() => onPageChange(i)}
+          onclick={() => onEvent({ type: 'setPageIndex', pageIndex: i })}
         ></button>
       {/each}
     </div>

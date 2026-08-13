@@ -375,14 +375,17 @@
   {/if}
 
   {#if addOpen || editingApp}
-    <AddAppDialog
-      initial={editingApp}
-      onSave={editingApp ? saveEditedApp : addApp}
-      onCancel={() => {
-        addOpen = false;
-        editingApp = null;
-      }}
-    />
+    <!-- 换编辑对象要重建：草稿把 initial 锁在自己的闭包里 -->
+    {#key editingApp?.id ?? 'new'}
+      <AddAppDialog
+        initial={editingApp}
+        onSave={editingApp ? saveEditedApp : addApp}
+        onCancel={() => {
+          addOpen = false;
+          editingApp = null;
+        }}
+      />
+    {/key}
   {/if}
 
   {#if settingsOpen}

@@ -43,6 +43,8 @@ function harness(options: { initial?: AppItem | null } = {}) {
   let titleValue = '站点标题';
   let iconGate: Promise<void> | null = null;
   let openIconGate: (() => void) | null = null;
+  let titleThrows = false;
+  let fileThrows = false;
 
   let snap: AppDraftSnapshot;
   const draft = createAppDraft({
@@ -61,9 +63,13 @@ function harness(options: { initial?: AppItem | null } = {}) {
     },
     fetchTitle: async (siteUrl) => {
       titleCalls.push(siteUrl);
+      if (titleThrows) throw new Error('title down');
       return titleValue;
     },
-    readImageFile: async () => 'data:image/png;base64,FILE',
+    readImageFile: async () => {
+      if (fileThrows) throw new Error('read down');
+      return 'data:image/png;base64,FILE';
+    },
   });
   snap = draft.snapshot();
 
@@ -77,6 +83,12 @@ function harness(options: { initial?: AppItem | null } = {}) {
     },
     setTitle: (v: string) => {
       titleValue = v;
+    },
+    breakTitle: () => {
+      titleThrows = true;
+    },
+    breakFileRead: () => {
+      fileThrows = true;
     },
     /** 卡住下一次图标抓取，用来制造「慢的那次」 */
     holdIcon: () => {
@@ -132,6 +144,37 @@ describe('app draft', () => {
     await h.advance(1);
     expect(h.iconCalls).toEqual(['https://example.com']);
     expect(h.snap().phase).toBe('scan');
+  });
+
+  it('还在防抖里又改了网址，旧的那次不发出去', async () => {
+    const h = harness();
+    h.draft.setUrl('first.example.com');
+    await h.advance(AUTOFILL_DEBOUNCE_MS - 50);
+    h.draft.setUrl('second.example.com');
+    await h.advance(AUTOFILL_DEBOUNCE_MS);
+
+    // 不重排定时器的话这里会是两条
+    expect(h.iconCalls).toEqual(['https://second.example.com']);
+  });
+
+  it('抓标题炸了不影响这一轮，名称退回主机名', async () => {
+    const h = harness();
+    h.breakTitle();
+    h.draft.setUrl('example.com');
+    await autofillFully(h);
+
+    expect(h.snap().name).toBe('example.com');
+    expect(h.snap().phase).toBe('idle');
+    expect(h.snap().canSave).toBe(true);
+  });
+
+  it('图片读不出来要给话，不能没反应', async () => {
+    const h = harness();
+    h.breakFileRead();
+    await h.draft.pickFile(new File([''], 'a.png', { type: 'image/png' }));
+
+    expect(h.snap().fileError).toBe('这张图读不出来，换一张吧');
+    expect(h.snap().icon).toBe('');
   });
 
   it('网址没成形不抓', async () => {

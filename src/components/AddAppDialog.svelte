@@ -23,7 +23,7 @@
   let urlEl = $state<HTMLInputElement | null>(null);
   let sheetEl = $state<HTMLFormElement | null>(null);
 
-  // initial 只在打开时喂一次；对话框由 {#key} 重建，不会中途换 App。
+  // initial 只在打开时喂一次；换编辑对象时 App.svelte 的 {#key} 会重建本组件。
   /* svelte-ignore state_referenced_locally */
   const draft = createAppDraft({
     initial,

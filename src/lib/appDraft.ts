@@ -85,6 +85,10 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/**
+ * 建一份草稿。`initial` 只在建的时候读一次，所以换编辑对象时对话框必须重建
+ * （`App.svelte` 用 `{#key}` 保证）。
+ */
 export function createAppDraft(deps: AppDraftDeps) {
   const clock = deps.clock ?? realClock;
   const resolveIcon = deps.resolveIcon ?? resolveAppIcon;
@@ -171,7 +175,8 @@ export function createAppDraft(deps: AppDraftDeps) {
     })();
 
     const titleTask = (async () => {
-      const title = await fetchTitle(normalized);
+      // 抓不到标题不算事故：名称已经有主机名兜底，别把整轮抓取拖成 rejection。
+      const title = await fetchTitle(normalized).catch(() => '');
       if (!title || !stillCurrent()) return;
       // 编辑已有 App 时不动用户自己起的名字。
       if (initial) return;
@@ -250,8 +255,14 @@ export function createAppDraft(deps: AppDraftDeps) {
       }
       fileError = '';
       emit();
-      const dataUrl = await readImageFile(file);
-      icon = dataUrl;
+      try {
+        icon = await readImageFile(file);
+      } catch {
+        // 读不出来要说话，否则用户看着没反应还以为选上了
+        fileError = '这张图读不出来，换一张吧';
+        emit();
+        return;
+      }
       iconField = '';
       iconLocked = true;
       emit();
@@ -288,5 +299,3 @@ export function createAppDraft(deps: AppDraftDeps) {
     },
   };
 }
-
-export type AppDraft = ReturnType<typeof createAppDraft>;

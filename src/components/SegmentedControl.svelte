@@ -175,11 +175,14 @@
     width: auto;
     flex: 1;
     min-width: 0;
+    flex-wrap: nowrap;
   }
   .fill button {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     padding-left: 0.2rem;
     padding-right: 0.2rem;
     text-align: center;
+    white-space: nowrap;
   }
 </style>

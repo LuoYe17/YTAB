@@ -13,3 +13,21 @@ export function dropdownOpensUp(
   if (spaceBelow >= menuHeight) return false;
   return spaceAbove > spaceBelow;
 }
+
+/**
+ * 把提示放到视口里还能看见的空位：先上下后左右，贴边再夹进来。
+ */
+export function placeFloatingTip(
+  anchor: { top: number; left: number; right: number; bottom: number; width: number },
+  tip: { width: number; height: number },
+  viewport: { width: number; height: number },
+  gap = 8,
+): { top: number; left: number } {
+  const edge = 8;
+  const openUp = dropdownOpensUp(anchor, tip.height, viewport.height, gap);
+  let top = openUp ? anchor.top - gap - tip.height : anchor.bottom + gap;
+  top = Math.max(edge, Math.min(top, viewport.height - tip.height - edge));
+  let left = anchor.left + anchor.width / 2 - tip.width / 2;
+  left = Math.max(edge, Math.min(left, viewport.width - tip.width - edge));
+  return { top, left };
+}

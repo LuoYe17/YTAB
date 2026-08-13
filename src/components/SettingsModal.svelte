@@ -7,27 +7,36 @@
   import { plainNotice } from '../lib/notice';
   import { applyFilter, visibleTagPresets, type FilterAction } from '../lib/settingsFilters';
   import { testWallhavenKey } from '../lib/wallhavenKey';
+  import { fetchBackup, deleteBackup } from '../lib/accountApi';
+  import { signIn } from '../lib/accountAuth';
+  import { accountConfigured } from '../lib/accountConfig';
+  import { setPassphraseAndUpload, unlockBundle } from '../lib/accountBackup';
+  import { passphraseOk } from '../lib/accountCrypto';
+  import {
+    clearSession,
+    formatBackupAt,
+    loadSession,
+    saveSession,
+    sessionFromAuth,
+    sessionUnlocked,
+    type AccountSession,
+  } from '../lib/accountSession';
+  import type { YtabState } from '../lib/types';
   import CapsuleSwitch from './CapsuleSwitch.svelte';
   import CustomScroll from './CustomScroll.svelte';
-  import FilePickButton from './FilePickButton.svelte';
   import GhostTip from './GhostTip.svelte';
-  import KnobSwitch from './KnobSwitch.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
 
-  type Tab = 'general' | 'wallpaper' | 'data';
-  type Sheet = 'export' | 'import' | 'reset' | null;
+  type Tab = 'general' | 'wallpaper' | 'account';
+  type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'general', label: '通用' },
     { id: 'wallpaper', label: '壁纸' },
-    { id: 'data', label: '数据' },
   ];
 
   const REPO_URL = 'https://github.com/LuoYe17/YTAB';
   const VERSION = 'v0.1.0';
-  /** 官网未上线；上线后改为 true。 */
-  const SITE_LIVE = false;
-  const SITE_URL = 'https://ytab.luoye.pro';
   const KEY_URL = 'https://wallhaven.cc/settings/account';
   const SORTING_OPTIONS: { value: WallhavenSorting; label: string }[] = [
     { value: 'random', label: '随机' },
@@ -44,8 +53,9 @@
     origin = { x: 40, y: 40 },
     onClose,
     onChange,
-    onExport,
-    onImport,
+    onboardingDone,
+    packCurrent,
+    onApplyState,
     onResetAll,
   }: {
     settings: Settings;
@@ -53,8 +63,9 @@
     origin?: { x: number; y: number };
     onClose: () => void;
     onChange: (next: Settings, invalidatePool?: boolean) => void;
-    onExport: (opts: { includeIcons: boolean; includeApiKey: boolean }) => void | Promise<void>;
-    onImport: (file: File) => void | Promise<void>;
+    onboardingDone: boolean;
+    packCurrent: () => YtabState;
+    onApplyState: (state: YtabState) => void | Promise<void>;
     onResetAll: () => void;
   } = $props();
 
@@ -62,11 +73,12 @@
   let tab = $state<Tab>(highlight ? 'wallpaper' : 'general');
   /* svelte-ignore state_referenced_locally */
   let glow = $state<WallpaperFailFocus | null>(highlight ?? null);
-  let includeIcons = $state(true);
-  let includeApiKey = $state(false);
-  let exportBusy = $state(false);
+  let accountBusy = $state(false);
   let sheet = $state<Sheet>(null);
-  let pendingFile = $state<File | null>(null);
+  let session = $state<AccountSession | null>(null);
+  let passA = $state('');
+  let passB = $state('');
+  let passOld = $state('');
   let apiKeyEl = $state<HTMLInputElement | null>(null);
   let navEl = $state<HTMLElement | null>(null);
   let pill = $state({ top: 0, height: 0 });
@@ -74,14 +86,25 @@
   let revealKey = $state(false);
   let keyFlash = $state<'ok' | 'fail' | null>(null);
   let testBusy = $state(false);
+  /* svelte-ignore state_referenced_locally */
+  let wallhavenOpen = $state(Boolean(highlight));
+  let tagsOpen = $state(false);
 
   const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
   const keyOk = $derived(hasKey && settings.wallhavenKeyOk);
   const tagPresets = $derived(visibleTagPresets(settings.wallhavenCategories));
+  const unlocked = $derived(sessionUnlocked(session));
+
+  $effect(() => {
+    void loadSession().then((s) => {
+      session = s;
+    });
+  });
 
   $effect(() => {
     if (!highlight) return;
     tab = 'wallpaper';
+    wallhavenOpen = true;
     glow = highlight;
   });
 
@@ -173,40 +196,187 @@
     }, 450);
   }
 
-  async function confirmExport() {
+  function closeSheet() {
     sheet = null;
-    exportBusy = true;
+    passA = '';
+    passB = '';
+    passOld = '';
+  }
+
+  function fail(err: unknown, fallback: string) {
+    plainNotice('fail', err instanceof Error ? err.message : fallback);
+  }
+
+  async function login() {
+    if (accountBusy) return;
+    accountBusy = true;
     try {
-      await onExport({ includeIcons, includeApiKey });
-      plainNotice('ok', '已导出');
-    } catch {
-      plainNotice('fail', '导出失败');
+      const auth = await signIn();
+      const next = await sessionFromAuth(auth);
+      await saveSession(next);
+      session = next;
+      if (auth.hasBackup) {
+        sheet = onboardingDone ? 'choose' : 'unlock';
+      } else if (onboardingDone) {
+        sheet = 'set';
+      } else {
+        plainNotice('ok', '云端还没有，先选一种起始');
+      }
+    } catch (err) {
+      fail(err, '登录失败');
     } finally {
-      exportBusy = false;
+      accountBusy = false;
     }
   }
 
-  function onImportPicked(file: File) {
-    pendingFile = file;
-    sheet = 'import';
+  async function logout() {
+    await clearSession();
+    session = null;
+    closeSheet();
+    plainNotice('ok', '已登出');
   }
 
-  async function confirmImport() {
-    const file = pendingFile;
-    pendingFile = null;
-    sheet = null;
-    if (!file) return;
+  async function confirmSet() {
+    if (passA !== passB) {
+      plainNotice('fail', '两次口令不一致');
+      return;
+    }
+    if (!session) return;
+    if (!passphraseOk(passA)) {
+      plainNotice('fail', '恢复口令至少 8 位');
+      return;
+    }
+    accountBusy = true;
     try {
-      await onImport(file);
-      plainNotice('ok', '已导入');
-    } catch (err: unknown) {
-      plainNotice('fail', err instanceof Error ? err.message : '导入失败');
+      session = await setPassphraseAndUpload(packCurrent(), passA, session);
+      closeSheet();
+      plainNotice('ok', '已上传');
+    } catch (err) {
+      fail(err, '上传失败');
+    } finally {
+      accountBusy = false;
+    }
+  }
+
+  async function confirmUnlock() {
+    if (!session) return;
+    if (!passA) {
+      plainNotice('fail', '请输入恢复口令');
+      return;
+    }
+    accountBusy = true;
+    try {
+      const bundle = await fetchBackup(session.token);
+      if (!bundle) throw new Error('云端还没有');
+      const got = await unlockBundle(bundle, passA);
+      const next = {
+        ...session,
+        rawKey: got.rawKey,
+        salt: got.salt,
+        iter: got.iter,
+        hasBackup: true,
+        uploadedAt: session.uploadedAt,
+      };
+      await saveSession(next);
+      session = next;
+      await onApplyState(got.state);
+      closeSheet();
+      plainNotice('ok', '已恢复');
+    } catch (err) {
+      fail(err, '恢复失败');
+    } finally {
+      accountBusy = false;
+    }
+  }
+
+  async function confirmChange() {
+    if (passA !== passB) {
+      plainNotice('fail', '两次口令不一致');
+      return;
+    }
+    if (!session) return;
+    if (!passphraseOk(passA)) {
+      plainNotice('fail', '恢复口令至少 8 位');
+      return;
+    }
+    accountBusy = true;
+    try {
+      // 解开只为验旧口令，明文随即丢弃；上传的内容以这台当前状态为准（后写盖住先写）。
+      const bundle = await fetchBackup(session.token);
+      if (bundle) await unlockBundle(bundle, passOld);
+      session = await setPassphraseAndUpload(packCurrent(), passA, session);
+      closeSheet();
+      plainNotice('ok', '已改口令');
+    } catch (err) {
+      fail(err, '改口令失败');
+    } finally {
+      accountBusy = false;
+    }
+  }
+
+  async function confirmDeleteCloud() {
+    if (!session) return;
+    accountBusy = true;
+    try {
+      await deleteBackup(session.token);
+      const next = {
+        ...session,
+        rawKey: undefined,
+        salt: undefined,
+        iter: undefined,
+        uploadedAt: undefined,
+        hasBackup: false,
+      };
+      await saveSession(next);
+      session = next;
+      closeSheet();
+      plainNotice('ok', '云端这份已删');
+    } catch (err) {
+      fail(err, '删除失败');
+    } finally {
+      accountBusy = false;
     }
   }
 
   function confirmReset() {
-    sheet = null;
+    closeSheet();
     onResetAll();
+  }
+
+  /** 按真实高度过渡。写死很大的 max-height 会让展开只走前一截、收起先空转。 */
+  function foldMax(node: HTMLElement, open: boolean) {
+    const inner = () => node.firstElementChild as HTMLElement | null;
+    const apply = (isOpen: boolean, instant: boolean) => {
+      const h = inner()?.scrollHeight ?? 0;
+      node.style.transitionDuration = instant ? '0s' : isOpen ? '0.48s' : '0.24s';
+      if (isOpen) {
+        node.style.maxHeight = `${h}px`;
+        return;
+      }
+      if (instant) {
+        node.style.maxHeight = '0px';
+        return;
+      }
+      node.style.maxHeight = `${h}px`;
+      node.getBoundingClientRect();
+      node.style.maxHeight = '0px';
+    };
+    apply(open, true);
+    const ro = new ResizeObserver(() => {
+      if (!open) return;
+      node.style.maxHeight = `${inner()?.scrollHeight ?? 0}px`;
+    });
+    const child = inner();
+    if (child) ro.observe(child);
+    return {
+      update(isOpen: boolean) {
+        open = isOpen;
+        apply(isOpen, false);
+      },
+      destroy() {
+        ro.disconnect();
+      },
+    };
   }
 
   function popFrom(node: HTMLElement, params: { x: number; y: number }) {
@@ -224,19 +394,16 @@
 </script>
 
 {#snippet helpMark(text: string)}
-  <GhostTip label={text} placement="se" wrap>
+  <GhostTip label={text} wrap>
     <button type="button" class="help" aria-label={text}>?</button>
   </GhostTip>
 {/snippet}
 
-{#snippet globe()}
-  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" />
+{#snippet githubMark()}
+  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
     <path
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.8"
-      d="M3 12h18M12 3c2.5 3 4 6.5 4 9s-1.5 6-4 9c-2.5-3-4-6.5-4-9s1.5-6 4-9Z"
+      fill="currentColor"
+      d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
     />
   </svg>
 {/snippet}
@@ -251,6 +418,19 @@
   <button type="button" class="backdrop" aria-label="关闭设置" onclick={onClose}></button>
   <div class="sheet ios-sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
     <aside>
+      <button
+        type="button"
+        class="who"
+        class:on={tab === 'account'}
+        onclick={() => (tab = 'account')}
+      >
+        {#if session?.avatar}
+          <img class="who-ava" src={session.avatar} alt="" />
+        {:else}
+          <span class="who-ava ph">{@render githubMark()}</span>
+        {/if}
+        <span class="who-name">{session ? session.label : accountConfigured() ? '登录' : '账号'}</span>
+      </button>
       <nav bind:this={navEl}>
         <div
           class="pill"
@@ -272,31 +452,14 @@
       </nav>
       <div class="foot">
         <div class="foot-start">
-          <GhostTip label="GitHub" placement="ne">
+          <GhostTip label="GitHub">
             <a class="icon" href={REPO_URL} target="_blank" rel="noreferrer" aria-label="GitHub">
-              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-                <path
-                  fill="currentColor"
-                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
-                />
-              </svg>
+              {@render githubMark()}
             </a>
           </GhostTip>
         </div>
         <span class="ver">{VERSION}</span>
-        <div class="foot-end">
-          <GhostTip label="官方网站" placement="nw">
-            {#if SITE_LIVE}
-              <a class="icon" href={SITE_URL} target="_blank" rel="noreferrer" aria-label="官方网站">
-                {@render globe()}
-              </a>
-            {:else}
-              <span class="icon off" aria-label="官方网站" aria-disabled="true">
-                {@render globe()}
-              </span>
-            {/if}
-          </GhostTip>
-        </div>
+        <div class="foot-end"></div>
       </div>
     </aside>
     <section>
@@ -343,156 +506,224 @@
         {:else if tab === 'wallpaper'}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
-              <div class="block" class:glow={glow === 'apiKey'}>
-                <div class="head">
-                  {#if keyOk}
-                    <span class="key-ok" transition:scale={{ duration: 220, start: 0.45 }} aria-hidden="true">
-                      <svg viewBox="0 0 24 24" width="16" height="16">
-                        <path
-                          fill="none"
-                          stroke="#34c759"
-                          stroke-width="2.4"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          d="M5 12.5 9.5 17 19 7"
-                        />
-                      </svg>
-                    </span>
-                  {/if}
-                  <span class="title">Wallhaven 密钥</span>
-                  {@render helpMark('选填。填了拉图更稳，想看「少儿不宜」内容必须先填。')}
-                  <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
+              <div class="block fold-card">
+                <div
+                  class="head fold"
+                  role="button"
+                  tabindex="0"
+                  aria-expanded={wallhavenOpen}
+                  aria-label={wallhavenOpen ? '收起 Wallhaven' : '展开 Wallhaven'}
+                  onclick={(e) => {
+                    if ((e.target as HTMLElement).closest('.help')) return;
+                    wallhavenOpen = !wallhavenOpen;
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    if ((e.target as HTMLElement).closest('.help')) return;
+                    e.preventDefault();
+                    wallhavenOpen = !wallhavenOpen;
+                  }}
+                >
+                  <span class="title">Wallhaven</span>
+                  <span class="fold-help">
+                    {@render helpMark('拉壁纸用的站。密钥选填；尺度、分类、标签都在这里。')}
+                  </span>
+                  <span class="chev" class:open={wallhavenOpen} aria-hidden="true">
+                    <svg viewBox="0 0 16 16" width="14" height="14">
+                      <path
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M4 6.5 8 10.5 12 6.5"
+                      />
+                    </svg>
+                  </span>
                 </div>
-                <div class="key-row">
-                  <div
-                    class="key-field"
-                    class:flash-ok={keyFlash === 'ok'}
-                    class:flash-fail={keyFlash === 'fail'}
-                  >
-                    <input
-                      bind:this={apiKeyEl}
-                      type={revealKey ? 'text' : 'password'}
-                      value={settings.wallhavenApiKey}
-                      placeholder="可选"
-                      autocomplete="off"
-                      oninput={(e) => onKeyInput((e.currentTarget as HTMLInputElement).value)}
+                <div class="fold-body" class:open={wallhavenOpen} use:foldMax={wallhavenOpen}>
+                  <div class="fold-clip">
+                    <div class="head" class:glow={glow === 'apiKey'}>
+                      {#if keyOk}
+                        <span class="key-ok" transition:scale={{ duration: 220, start: 0.45 }} aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path
+                              fill="none"
+                              stroke="#34c759"
+                              stroke-width="2.4"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              d="M5 12.5 9.5 17 19 7"
+                            />
+                          </svg>
+                        </span>
+                      {/if}
+                      <span class="title">密钥</span>
+                      {@render helpMark('选填。填了拉图更稳，想看「少儿不宜」内容必须先填。')}
+                      <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
+                    </div>
+                    <div class="key-row">
+                      <div
+                        class="key-field"
+                        class:flash-ok={keyFlash === 'ok'}
+                        class:flash-fail={keyFlash === 'fail'}
+                      >
+                        <input
+                          bind:this={apiKeyEl}
+                          type={revealKey ? 'text' : 'password'}
+                          value={settings.wallhavenApiKey}
+                          placeholder="可选"
+                          autocomplete="off"
+                          oninput={(e) => onKeyInput((e.currentTarget as HTMLInputElement).value)}
+                        />
+                        <button
+                          type="button"
+                          class="eye"
+                          onclick={() => (revealKey = !revealKey)}
+                          aria-label={revealKey ? '隐藏密钥' : '显示密钥'}
+                        >
+                          {#if revealKey}
+                            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                              <path
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.8"
+                                stroke-linecap="round"
+                                d="M3 3l18 18M9.9 4.2A9 9 0 0 1 12 4c5.2 0 9.5 3.4 11 8.5a12 12 0 0 1-1.8 2.8M6.1 6.1C4 7.6 2.4 9.6 1 12.5 2.5 17.6 6.8 21 12 21c1.7 0 3.3-.4 4.7-1"
+                              />
+                            </svg>
+                          {:else}
+                            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                              <path
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.8"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                d="M1 12.5C2.5 7.4 6.8 4 12 4s9.5 3.4 11 8.5C21.5 17.6 17.2 21 12 21S2.5 17.6 1 12.5Z"
+                              />
+                              <circle cx="12" cy="12.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+                            </svg>
+                          {/if}
+                        </button>
+                      </div>
+                      {#if hasKey}
+                        <button type="button" class="action" disabled={testBusy} onclick={testKey}>测试</button>
+                      {/if}
+                    </div>
+                  <div class="wh-row" class:glow={glow === 'filters'}>
+                    <div class="head">
+                      <span class="title">尺度</span>
+                      {@render helpMark('想看少儿不宜的图。至少留一项。没密钥不能开「少儿不宜」。')}
+                    </div>
+                    <div class="caps tight">
+                      <CapsuleSwitch
+                        label="安全"
+                        tile
+                        on={settings.wallhavenPurity.sfw}
+                        onChange={(on) => setPurity('sfw', on)}
+                      />
+                      <CapsuleSwitch
+                        label="擦边"
+                        tile
+                        on={settings.wallhavenPurity.sketchy}
+                        onChange={(on) => setPurity('sketchy', on)}
+                      />
+                      <CapsuleSwitch
+                        label="少儿不宜"
+                        tile
+                        on={settings.wallhavenPurity.nsfw}
+                        disabled={!hasKey}
+                        onChange={(on) => setPurity('nsfw', on)}
+                      />
+                    </div>
+                  </div>
+                  <div class="wh-row" class:glow={glow === 'filters'}>
+                    <div class="head">
+                      <span class="title">分类</span>
+                      {@render helpMark('壁纸属于哪一类。至少留一项。')}
+                    </div>
+                    <div class="caps tight">
+                      <CapsuleSwitch
+                        label="常规"
+                        tile
+                        on={settings.wallhavenCategories.general}
+                        onChange={(on) => setCategory('general', on)}
+                      />
+                      <CapsuleSwitch
+                        label="动漫"
+                        tile
+                        on={settings.wallhavenCategories.anime}
+                        onChange={(on) => setCategory('anime', on)}
+                      />
+                      <CapsuleSwitch
+                        label="人物"
+                        tile
+                        on={settings.wallhavenCategories.people}
+                        onChange={(on) => setCategory('people', on)}
+                      />
+                    </div>
+                  </div>
+                  <div class="wh-row">
+                    <div class="head">
+                      <span id="wallpaper-sorting" class="title">排序</span>
+                      {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签时，「相关」更准。')}
+                    </div>
+                    <SegmentedControl
+                      labelledBy="wallpaper-sorting"
+                      value={settings.wallhavenSorting || 'toplist'}
+                      options={SORTING_OPTIONS}
+                      fill
+                      onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}
                     />
-                    <button
-                      type="button"
-                      class="eye"
-                      onclick={() => (revealKey = !revealKey)}
-                      aria-label={revealKey ? '隐藏密钥' : '显示密钥'}
+                  </div>
+                    <div
+                      class="head fold"
+                      role="button"
+                      tabindex="0"
+                      aria-expanded={tagsOpen}
+                      aria-label={tagsOpen ? '收起标签' : '展开标签'}
+                      onclick={(e) => {
+                        if ((e.target as HTMLElement).closest('.help')) return;
+                        tagsOpen = !tagsOpen;
+                      }}
+                      onkeydown={(e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return;
+                        if ((e.target as HTMLElement).closest('.help')) return;
+                        e.preventDefault();
+                        tagsOpen = !tagsOpen;
+                      }}
                     >
-                      {#if revealKey}
-                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                          <path
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            stroke-linecap="round"
-                            d="M3 3l18 18M9.9 4.2A9 9 0 0 1 12 4c5.2 0 9.5 3.4 11 8.5a12 12 0 0 1-1.8 2.8M6.1 6.1C4 7.6 2.4 9.6 1 12.5 2.5 17.6 6.8 21 12 21c1.7 0 3.3-.4 4.7-1"
-                          />
-                        </svg>
-                      {:else}
-                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <span class="title">标签</span>
+                      <span class="fold-help">
+                        {@render helpMark('可选。跟着上面分类换。多选一起搜，全关就不限题材。')}
+                      </span>
+                      <span class="chev" class:open={tagsOpen} aria-hidden="true">
+                        <svg viewBox="0 0 16 16" width="14" height="14">
                           <path
                             fill="none"
                             stroke="currentColor"
                             stroke-width="1.8"
                             stroke-linecap="round"
                             stroke-linejoin="round"
-                            d="M1 12.5C2.5 7.4 6.8 4 12 4s9.5 3.4 11 8.5C21.5 17.6 17.2 21 12 21S2.5 17.6 1 12.5Z"
+                            d="M4 6.5 8 10.5 12 6.5"
                           />
-                          <circle cx="12" cy="12.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
                         </svg>
-                      {/if}
-                    </button>
+                      </span>
+                    </div>
+                    <div class="fold-body" class:open={tagsOpen} use:foldMax={tagsOpen}>
+                      <div class="caps fill">
+                        {#each tagPresets as tag (tag.id)}
+                          <CapsuleSwitch
+                            label={tag.label}
+                            tile
+                            on={(settings.wallhavenTags ?? []).includes(tag.id)}
+                            onChange={(on) => setTag(tag.id, on)}
+                          />
+                        {/each}
+                      </div>
+                    </div>
                   </div>
-                  {#if hasKey}
-                    <button type="button" class="action" disabled={testBusy} onclick={testKey}>测试</button>
-                  {/if}
-                </div>
-              </div>
-              <div class="block" class:glow={glow === 'filters'}>
-                <div class="head">
-                  <span class="title">内容尺度</span>
-                  {@render helpMark('想看少儿不宜的图。至少留一项。没密钥不能开「少儿不宜」。')}
-                </div>
-                <div class="caps fill">
-                  <CapsuleSwitch
-                    label="安全"
-                    tile
-                    on={settings.wallhavenPurity.sfw}
-                    onChange={(on) => setPurity('sfw', on)}
-                  />
-                  <CapsuleSwitch
-                    label="擦边"
-                    tile
-                    on={settings.wallhavenPurity.sketchy}
-                    onChange={(on) => setPurity('sketchy', on)}
-                  />
-                  <CapsuleSwitch
-                    label="少儿不宜"
-                    tile
-                    on={settings.wallhavenPurity.nsfw}
-                    disabled={!hasKey}
-                    onChange={(on) => setPurity('nsfw', on)}
-                  />
-                </div>
-              </div>
-              <div class="block" class:glow={glow === 'filters'}>
-                <div class="head">
-                  <span class="title">分类</span>
-                  {@render helpMark('壁纸属于哪一类。至少留一项。')}
-                </div>
-                <div class="caps fill">
-                  <CapsuleSwitch
-                    label="常规"
-                    tile
-                    on={settings.wallhavenCategories.general}
-                    onChange={(on) => setCategory('general', on)}
-                  />
-                  <CapsuleSwitch
-                    label="动漫"
-                    tile
-                    on={settings.wallhavenCategories.anime}
-                    onChange={(on) => setCategory('anime', on)}
-                  />
-                  <CapsuleSwitch
-                    label="人物"
-                    tile
-                    on={settings.wallhavenCategories.people}
-                    onChange={(on) => setCategory('people', on)}
-                  />
-                </div>
-              </div>
-              <div class="block inline">
-                <div class="head">
-                  <span id="wallpaper-sorting" class="title">排序</span>
-                  {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签时，「相关」更准。')}
-                </div>
-                <SegmentedControl
-                  labelledBy="wallpaper-sorting"
-                  value={settings.wallhavenSorting || 'toplist'}
-                  options={SORTING_OPTIONS}
-                  fill
-                  onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}
-                />
-              </div>
-              <div class="block">
-                <div class="head">
-                  <span class="title">标签</span>
-                  {@render helpMark('可选。跟着上面分类换。多选一起搜，全关就不限题材。')}
-                </div>
-                <div class="caps fill">
-                  {#each tagPresets as tag (tag.id)}
-                    <CapsuleSwitch
-                      label={tag.label}
-                      tile
-                      on={(settings.wallhavenTags ?? []).includes(tag.id)}
-                      onChange={(on) => setTag(tag.id, on)}
-                    />
-                  {/each}
                 </div>
               </div>
             </CustomScroll>
@@ -500,28 +731,71 @@
         {:else}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
-              <div class="block inline">
-                <div class="head">
-                  <span class="title">导出</span>
-                  {@render helpMark('把 App、设置和壁纸存成一个文件，方便换机。图标和密钥下一步再选。')}
+              {#if accountConfigured() && !session}
+                <div class="block inline">
+                  <div class="head">
+                    <span class="title">云端备份</span>
+                    {@render helpMark('登录后改完自己传到云端。卸扩展或换机再登录，用恢复口令解开。可以不登。传到云端的是加密后的整份，服务器只见密文。口令忘了只能删掉重来。')}
+                  </div>
+                  <button type="button" class="action with-mark" disabled={accountBusy} onclick={() => login()}>
+                    {@render githubMark()}
+                    {accountBusy ? '登录中…' : '用 GitHub 登录'}
+                  </button>
                 </div>
-                <button type="button" class="action" disabled={exportBusy} onclick={() => (sheet = 'export')}>
-                  {exportBusy ? '导出中…' : '导出'}
-                </button>
-              </div>
-              <div class="block inline">
-                <div class="head">
-                  <span class="title">导入</span>
-                  {@render helpMark('用导出的文件恢复。会整份换成文件里的内容，现在的会被覆盖。')}
+              {:else if session}
+                <div class="block">
+                  <div class="inline-row">
+                    <div class="head">
+                      <span class="title">云端备份</span>
+                      {@render helpMark('改完会自己传。后写盖住先写。传到云端的是加密后的整份，服务器只见密文。退出后本机留下，不再上传。')}
+                    </div>
+                    <span class="when">
+                      {#if session.uploadedAt}
+                        {formatBackupAt(session.uploadedAt)}
+                      {:else if session.hasBackup}
+                        {unlocked ? '云端有一份' : '未解开'}
+                      {:else}
+                        还没传过
+                      {/if}
+                    </span>
+                  </div>
+                  <div class="acts">
+                    {#if unlocked}
+                      <button type="button" class="ghost" disabled={accountBusy} onclick={() => (sheet = 'change')}>
+                        改口令
+                      </button>
+                    {:else if session.hasBackup !== false}
+                      <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'unlock')}>
+                        解开
+                      </button>
+                    {:else}
+                      <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'set')}>
+                        设口令
+                      </button>
+                    {/if}
+                    <button type="button" class="ghost" disabled={accountBusy} onclick={() => logout()}>退出</button>
+                  </div>
                 </div>
-                <FilePickButton label="选择文件" accept=".ytab,application/zip" onFile={onImportPicked} />
-              </div>
-              <div class="block inline">
-                <div class="head">
-                  <span class="title">重置</span>
-                  {@render helpMark('清掉本机全部数据，回到第一次打开时的选择。做不到撤销。')}
+              {/if}
+              <div class="block">
+                {#if session}
+                  <div class="inline-row">
+                    <div class="head">
+                      <span class="title">删除云端</span>
+                      {@render helpMark('只丢掉服务器上的密文。本机不动。')}
+                    </div>
+                    <button type="button" class="danger" disabled={accountBusy} onclick={() => (sheet = 'delete')}>
+                      删除
+                    </button>
+                  </div>
+                {/if}
+                <div class="inline-row">
+                  <div class="head">
+                    <span class="title">重置本机</span>
+                    {@render helpMark('清掉本机全部数据，回到第一次打开。此设备登录会忘掉。云端还在。')}
+                  </div>
+                  <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置</button>
                 </div>
-                <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置所有数据</button>
               </div>
             </CustomScroll>
           </div>
@@ -529,46 +803,96 @@
       </div>
     </section>
 
-    {#if sheet === 'export'}
+    {#if sheet === 'choose'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <div class="opt">
-            <span id="lbl-icons">包含图标</span>
-            <KnobSwitch labelledBy="lbl-icons" on={includeIcons} onChange={(on) => (includeIcons = on)} />
+          <div class="head">
+            <span class="title">选一份</span>
           </div>
-          <div class="opt">
-            <span id="lbl-key">包含密钥</span>
-            <KnobSwitch labelledBy="lbl-key" on={includeApiKey} onChange={(on) => (includeApiKey = on)} />
-          </div>
+          <p>云端有一份，这台也有。用哪边？</p>
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={() => (sheet = null)}>取消</button>
-            <button type="button" class="action" onclick={confirmExport}>导出</button>
+            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="ghost" disabled={accountBusy} onclick={() => (sheet = 'set')}>
+              用这台的
+            </button>
+            <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'unlock')}>
+              用云端的
+            </button>
           </div>
         </div>
       </div>
-    {:else if sheet === 'import'}
+    {:else if sheet === 'set'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <p>将用所选文件整份替换当前 App、文件夹、设置与壁纸。此操作不可撤销。</p>
+          <div class="head">
+            <span class="title">恢复口令</span>
+            {@render helpMark('用来加密云端这份。忘了就打不开，只能删掉重来。')}
+          </div>
+          <p>
+            {session?.hasBackup
+              ? '会用这台的内容盖住云端那份，旧口令随之作废。至少 8 位。'
+              : '至少 8 位。再输入一次确认。'}
+          </p>
+          <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
+          <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
           <div class="confirm-row">
-            <button
-              type="button"
-              class="ghost"
-              onclick={() => {
-                pendingFile = null;
-                sheet = null;
-              }}>取消</button
-            >
-            <button type="button" class="action" onclick={confirmImport}>确定导入</button>
+            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="action" disabled={accountBusy} onclick={confirmSet}>
+              确定
+            </button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'unlock'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <div class="head">
+            <span class="title">解开云端</span>
+            {@render helpMark('输入当时设的恢复口令。')}
+          </div>
+          <p>解开后这台会记住，退出或卸扩展才忘。</p>
+          <input class="pass" type="password" autocomplete="current-password" placeholder="恢复口令" bind:value={passA} />
+          <div class="confirm-row">
+            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="action" disabled={accountBusy} onclick={confirmUnlock}>
+              解开
+            </button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'change'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <div class="head">
+            <span class="title">改口令</span>
+            {@render helpMark('要先对上现在的口令。')}
+          </div>
+          <p>新口令至少 8 位。</p>
+          <input class="pass" type="password" autocomplete="current-password" placeholder="现在的口令" bind:value={passOld} />
+          <input class="pass" type="password" autocomplete="new-password" placeholder="新口令，至少 8 位" bind:value={passA} />
+          <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
+          <div class="confirm-row">
+            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="action" disabled={accountBusy} onclick={confirmChange}>确定</button>
+          </div>
+        </div>
+      </div>
+    {:else if sheet === 'delete'}
+      <div class="confirm" transition:fade={{ duration: 140 }}>
+        <div class="confirm-card">
+          <p>删掉云端那份密文。本机网格不动。此操作不可撤销。</p>
+          <div class="confirm-row">
+            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="danger" disabled={accountBusy} onclick={confirmDeleteCloud}>确定删除</button>
           </div>
         </div>
       </div>
     {:else if sheet === 'reset'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <p>将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动。此操作不可撤销。</p>
+          <p>将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动。这台登录会忘掉。云端还在。此操作不可撤销。</p>
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={() => (sheet = null)}>取消</button>
+            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
             <button type="button" class="danger" onclick={confirmReset}>确定重置</button>
           </div>
         </div>
@@ -616,6 +940,59 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+  .who {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    padding: 0.75rem 0.7rem 0.7rem;
+    background-image: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12));
+    background-size: calc(100% - 2.4rem) 1px;
+    background-position: bottom center;
+    background-repeat: no-repeat;
+    min-width: 0;
+  }
+  .who:hover,
+  .who.on {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+  .who:hover .who-name,
+  .who.on .who-name {
+    color: #fff;
+  }
+  .who-ava {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .who-ava.ph {
+    display: grid;
+    place-items: center;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .who-ava.ph :global(svg) {
+    width: 16px;
+    height: 16px;
+  }
+  .who-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: 0.82rem;
   }
   nav {
     position: relative;
@@ -665,7 +1042,10 @@
     align-items: center;
     margin-top: auto;
     padding: 0.45rem 0.6rem 0.7rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background-image: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12));
+    background-size: calc(100% - 2.4rem) 1px;
+    background-position: top center;
+    background-repeat: no-repeat;
   }
   .foot-start {
     justify-self: start;
@@ -695,9 +1075,6 @@
   a.icon:hover {
     color: rgba(255, 255, 255, 0.95);
     background: rgba(255, 255, 255, 0.08);
-  }
-  .icon.off {
-    opacity: 0.38;
   }
   section {
     display: flex;
@@ -743,6 +1120,18 @@
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.05);
   }
+  .fold-card {
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .fold-card > .head.fold {
+    position: relative;
+    z-index: 1;
+    padding: 0.58rem 0.75rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+  }
   .block.inline {
     flex-direction: row;
     align-items: center;
@@ -753,10 +1142,65 @@
     flex-wrap: nowrap;
     flex-shrink: 0;
   }
-  .block.inline .action,
-  .block.inline .danger {
+  .block.inline .action {
     align-self: center;
     flex-shrink: 0;
+  }
+  .head.fold {
+    width: 100%;
+    cursor: pointer;
+    border-radius: 8px;
+    user-select: none;
+  }
+  .head.fold:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .fold-help {
+    display: inline-flex;
+  }
+  .chev {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.55);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    pointer-events: none;
+  }
+  .chev svg {
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .chev.open svg {
+    transform: rotate(180deg);
+  }
+  .fold-body {
+    overflow: hidden;
+    max-height: 0;
+    transition-property: max-height;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .fold-clip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.15rem 0.75rem 0.7rem;
+  }
+  .wh-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.55rem;
+    padding: 0.15rem 0;
+    border-radius: 8px;
+  }
+  .caps.tight {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 0;
   }
   .head {
     display: flex;
@@ -766,6 +1210,39 @@
   }
   .title {
     font-weight: 600;
+  }
+  .when {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 0.78rem;
+    flex-shrink: 0;
+  }
+  .inline-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .acts {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+  .pass {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 0.45rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.25);
+    color: inherit;
+    border-radius: 8px;
+    padding: 0.45rem 0.65rem;
+    font: inherit;
+    outline: none;
+  }
+  .pass:focus {
+    border-color: rgba(126, 203, 255, 0.55);
   }
   .help {
     appearance: none;
@@ -883,6 +1360,14 @@
     background: rgba(255, 255, 255, 0.16);
     color: #fff;
   }
+  .action.with-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .action.with-mark svg {
+    flex-shrink: 0;
+  }
   .action:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.24);
   }
@@ -931,12 +1416,6 @@
       transform: translateX(4px);
     }
   }
-  .opt {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
   .confirm {
     position: absolute;
     inset: 0;
@@ -948,13 +1427,16 @@
   }
   .confirm-card {
     width: min(360px, 100%);
-    background: rgba(32, 32, 36, 0.92);
+    background: rgba(28, 28, 32, 0.72);
+    backdrop-filter: blur(28px) saturate(1.25);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 12px;
-    padding: 1rem 1.1rem;
+    padding: 0.9rem 1rem 1rem;
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.65rem;
+    color: #f5f5f7;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
   }
   .confirm-card p {
     margin: 0;
@@ -965,5 +1447,15 @@
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
+  }
+  .confirm-row .action {
+    background: #fff;
+    color: #111;
+  }
+  .confirm-row .action:hover:not(:disabled) {
+    background: #f2f2f7;
+  }
+  .confirm-row .action:disabled {
+    opacity: 0.45;
   }
 </style>

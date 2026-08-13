@@ -7,12 +7,20 @@
   } from '../lib/defaults';
   import { bundledIconUrl } from '../lib/appIcons';
   import { fetchHitokoto } from '../lib/hitokoto';
-  import type { AppItem, HitokotoState, Settings } from '../lib/types';
+  import type { AppItem, HitokotoState, Settings, YtabState } from '../lib/types';
   import { fetchRandomWallpaper, type WallhavenFetchResult } from '../lib/wallpaper';
+  import { fetchBackup } from '../lib/accountApi';
+  import { signIn } from '../lib/accountAuth';
+  import { accountConfigured } from '../lib/accountConfig';
+  import { unlockBundle } from '../lib/accountBackup';
+  import { passphraseOk } from '../lib/accountCrypto';
+  import { plainNotice } from '../lib/notice';
+  import { saveSession, sessionFromAuth, type AccountSession } from '../lib/accountSession';
 
   let {
     settings,
     onChoose,
+    onRestored,
   }: {
     settings: Settings;
     onChoose: (result: {
@@ -21,10 +29,15 @@
       hitokoto: HitokotoState | null;
       wallpaper: WallhavenFetchResult | null;
     }) => void;
+    onRestored: (state: YtabState) => void | Promise<void>;
   } = $props();
 
   let selected = $state<'author' | 'empty'>('author');
   let phase = $state<'idle' | 'scan' | 'success'>('idle');
+  let unlockOpen = $state(false);
+  let passA = $state('');
+  let loginBusy = $state(false);
+  let pending = $state<AccountSession | null>(null);
 
   async function confirm() {
     if (phase !== 'idle') return;
@@ -64,6 +77,43 @@
   function pick(mode: 'author' | 'empty') {
     if (phase !== 'idle') return;
     selected = mode;
+  }
+
+  async function login() {
+    if (phase !== 'idle' || loginBusy) return;
+    loginBusy = true;
+    try {
+      const auth = await signIn();
+      const next = await sessionFromAuth(auth);
+      await saveSession(next);
+      pending = next;
+      if (auth.hasBackup) {
+        unlockOpen = true;
+      } else {
+        plainNotice('ok', '云端还没有，先选一种起始');
+      }
+    } catch (err) {
+      plainNotice('fail', err instanceof Error ? err.message : '登录失败');
+    } finally {
+      loginBusy = false;
+    }
+  }
+
+  async function confirmUnlock() {
+    if (!pending || !passA || loginBusy) return;
+    loginBusy = true;
+    try {
+      const bundle = await fetchBackup(pending.token);
+      if (!bundle) throw new Error('云端还没有');
+      const got = await unlockBundle(bundle, passA);
+      await saveSession({ ...pending, rawKey: got.rawKey, salt: got.salt, iter: got.iter });
+      phase = 'success';
+      await onRestored(got.state);
+    } catch (err) {
+      plainNotice('fail', err instanceof Error ? err.message : '恢复失败');
+    } finally {
+      loginBusy = false;
+    }
   }
 </script>
 
@@ -131,6 +181,30 @@
         <span class="tick" aria-hidden="true"></span>
       </button>
     </div>
+
+    {#if accountConfigured()}
+      <button
+        type="button"
+        class="backup-link"
+        disabled={phase !== 'idle' || loginBusy}
+        onclick={() => login()}
+      >
+        {loginBusy ? '登录中…' : '已有账号'}
+      </button>
+    {/if}
+
+    {#if unlockOpen}
+      <div class="unlock">
+        <p>输入恢复口令，解开云端这份。</p>
+        <input class="pass" type="password" autocomplete="current-password" placeholder="恢复口令" bind:value={passA} />
+        <div class="unlock-row">
+          <button type="button" class="ghost" onclick={() => (unlockOpen = false)}>取消</button>
+          <button type="button" class="action" disabled={loginBusy || !passphraseOk(passA)} onclick={confirmUnlock}>
+            解开
+          </button>
+        </div>
+      </div>
+    {/if}
 
     <div class="footer">
       {#if phase === 'idle'}
@@ -429,6 +503,68 @@
     transform: scale(1.08);
   }
 
+  .backup-link {
+    appearance: none;
+    display: block;
+    width: 100%;
+    margin: 0.55rem 0 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #0a84ff;
+    font: inherit;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    text-align: center;
+    cursor: pointer;
+  }
+  .backup-link:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .backup-link:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .action,
+  .ghost {
+    appearance: none;
+    flex: 1;
+    border: 0;
+    border-radius: 10px;
+    padding: 0.45rem 0.6rem;
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .action {
+    background: #1c1c1e;
+    color: #fff;
+  }
+  .ghost {
+    background: rgba(0, 0, 0, 0.06);
+    color: #1c1c1e;
+  }
+  .unlock {
+    margin-top: 0.65rem;
+  }
+  .unlock p {
+    margin: 0 0 0.4rem;
+    font-size: 0.8rem;
+    color: #3a3a3c;
+  }
+  .pass {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 10px;
+    padding: 0.45rem 0.65rem;
+    font: inherit;
+  }
+  .unlock-row {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+  }
   .footer {
     margin-top: 0.75rem;
     min-height: 48px;

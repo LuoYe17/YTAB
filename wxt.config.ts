@@ -8,6 +8,7 @@ export default defineConfig({
     description: '浏览器新标签起始页',
     permissions: ['storage', 'alarms', 'unlimitedStorage'],
     host_permissions: [
+      'https://api.ytab.luoye.pro/*',
       'https://wallhaven.cc/*',
       'https://*.wallhaven.cc/*',
       'https://i.wallhaven.cc/*',

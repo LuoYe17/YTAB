@@ -45,7 +45,7 @@
 </script>
 
 <div class="wrap">
-  <GhostTip label="换一张" placement="nw">
+  <GhostTip label="换一张">
     <button
       type="button"
       class="ghost"

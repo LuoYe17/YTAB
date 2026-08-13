@@ -1,0 +1,9 @@
+name = "ytab-account"
+main = "src/index.ts"
+compatibility_date = "2026-01-15"
+
+routes = [{ pattern = "api.ytab.luoye.pro", custom_domain = true }]
+
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "ytab-backups"

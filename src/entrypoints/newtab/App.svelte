@@ -21,8 +21,11 @@
   } from '../../lib/appGrid';
   import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
-  import { downloadBlob, exportYtab, importYtab } from '../../lib/backup';
   import { applyImportedState } from '../../lib/importApply';
+  import { flushAccountBackup, scheduleAccountBackup, setPassphraseAndUpload } from '../../lib/accountBackup';
+  import { backupInterest } from '../../lib/accountInterest';
+  import { passphraseOk } from '../../lib/accountCrypto';
+  import { clearSession, loadSession, needsFirstPassphrase } from '../../lib/accountSession';
   import {
     createEmptyState,
     type AppItem,
@@ -56,6 +59,10 @@
   let mainEl = $state<HTMLElement | null>(null);
   let settingsBtnEl = $state<HTMLButtonElement | null>(null);
   let settingsOrigin = $state({ x: 40, y: 40 });
+  let needPass = $state(false);
+  let passA = $state('');
+  let passB = $state('');
+  let passBusy = $state(false);
 
   function openSettings(focus: WallpaperFailFocus | null = null) {
     const r = settingsBtnEl?.getBoundingClientRect();
@@ -65,8 +72,19 @@
   }
 
   onMount(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') {
+        flushAccountBackup();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
     void bootstrap();
+    return () => document.removeEventListener('visibilitychange', onHide);
   });
+
+  function packCurrent(): YtabState {
+    return { ...$state.snapshot(ytab), pages: $state.snapshot(grid).pages };
+  }
 
   async function bootstrap() {
     try {
@@ -93,8 +111,11 @@
   }
 
   async function persist(updater: (prev: YtabState) => YtabState) {
+    const before = backupInterest(packCurrent());
     ytab = updater(ytab);
     await saveState(ytab);
+    const after = packCurrent();
+    if (backupInterest(after) !== before) scheduleAccountBackup(after);
   }
 
   async function persistWallpaper(item: WallpaperItem) {
@@ -191,6 +212,8 @@
       wallpaperPool.rememberCurrent(result.wallpaper.wallhavenId);
     }
     schedulePoolFill(ytab.settings);
+    const session = await loadSession();
+    if (needsFirstPassphrase(session)) needPass = true;
   }
 
   function openApp(app: AppItem) {
@@ -236,22 +259,42 @@
     schedulePoolFill(applied.state.settings);
   }
 
-  async function onExportFile(opts: { includeIcons: boolean; includeApiKey: boolean }) {
-    const snap = $state.snapshot(ytab);
-    const blob = await exportYtab({ ...snap, pages: $state.snapshot(grid).pages }, opts);
-    downloadBlob(blob, `ytab-${new Date().toISOString().slice(0, 10)}.ytab`);
-  }
-
-  async function onImportFile(file: File) {
-    const state = await importYtab(file);
-    await onImportState(state);
-  }
-
   async function onResetAll() {
+    await clearSession();
+    needPass = false;
     await landImported(applyImportedState(createEmptyState(), { endFirstRun: false }));
     addOpen = false;
     editingApp = null;
     plainNotice('ok', '已重置');
+  }
+
+  async function confirmFirstPass() {
+    if (passA !== passB) {
+      plainNotice('fail', '两次口令不一致');
+      return;
+    }
+    if (passBusy) return;
+    if (!passphraseOk(passA)) {
+      plainNotice('fail', '恢复口令至少 8 位');
+      return;
+    }
+    passBusy = true;
+    try {
+      const session = await loadSession();
+      if (!session) {
+        needPass = false;
+        return;
+      }
+      await setPassphraseAndUpload(packCurrent(), passA, session);
+      needPass = false;
+      passA = '';
+      passB = '';
+      plainNotice('ok', '已上传');
+    } catch (err) {
+      plainNotice('fail', err instanceof Error ? err.message : '上传失败');
+    } finally {
+      passBusy = false;
+    }
   }
 </script>
 
@@ -294,7 +337,7 @@
     </main>
 
     <div class="settings-slot">
-      <GhostTip label="设置" placement="ne">
+      <GhostTip label="设置">
         <button
           bind:this={settingsBtnEl}
           type="button"
@@ -328,20 +371,18 @@
   </div>
 
   {#if !ytab.onboardingDone}
-    <FirstRun settings={ytab.settings} onChoose={onFirstRun} />
+    <FirstRun settings={ytab.settings} onChoose={onFirstRun} onRestored={onImportState} />
   {/if}
 
   {#if addOpen || editingApp}
-    {#key editingApp?.id ?? 'new'}
-      <AddAppDialog
-        initial={editingApp}
-        onSave={editingApp ? saveEditedApp : addApp}
-        onCancel={() => {
-          addOpen = false;
-          editingApp = null;
-        }}
-      />
-    {/key}
+    <AddAppDialog
+      initial={editingApp}
+      onSave={editingApp ? saveEditedApp : addApp}
+      onCancel={() => {
+        addOpen = false;
+        editingApp = null;
+      }}
+    />
   {/if}
 
   {#if settingsOpen}
@@ -354,8 +395,9 @@
         settingsHighlight = null;
       }}
       onChange={onSettingsChange}
-      onExport={onExportFile}
-      onImport={onImportFile}
+      onboardingDone={ytab.onboardingDone}
+      packCurrent={packCurrent}
+      onApplyState={onImportState}
       onResetAll={onResetAll}
     />
   {/if}
@@ -376,12 +418,102 @@
       onDeleteApp={(app) => dispatchGrid({ type: 'removeApp', appId: app.id })}
     />
   {/if}
+
+  {#if needPass}
+    <div class="pass-gate" role="dialog" aria-modal="true" aria-labelledby="pass-title">
+      <div class="pass-card">
+        <h2 id="pass-title">恢复口令</h2>
+        <p>用来加密云端这份。至少 8 位，忘了就打不开。</p>
+        <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
+        <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
+        <div class="pass-row">
+          <button type="button" class="pass-skip" disabled={passBusy} onclick={() => (needPass = false)}>
+            稍后
+          </button>
+          <button type="button" class="pass-go" disabled={passBusy} onclick={confirmFirstPass}>
+            确定
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
   {/if}
 
   <NoticeHost onAction={(focus) => openSettings(focus)} />
 {/if}
 
 <style>
+  .pass-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.28);
+  }
+  .pass-card {
+    width: min(360px, calc(100vw - 2rem));
+    padding: 0.9rem 1rem 1rem;
+    background: rgba(28, 28, 32, 0.72);
+    backdrop-filter: blur(28px) saturate(1.25);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    color: #f5f5f7;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+  }
+  .pass-card h2 {
+    margin: 0 0 0.35rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
+  .pass-card p {
+    margin: 0 0 0.7rem;
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .pass {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 0 0.45rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.25);
+    color: inherit;
+    border-radius: 8px;
+    padding: 0.45rem 0.65rem;
+    font: inherit;
+    outline: none;
+  }
+  .pass:focus {
+    border-color: rgba(126, 203, 255, 0.55);
+  }
+  .pass-row {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.2rem;
+  }
+  .pass-go,
+  .pass-skip {
+    appearance: none;
+    flex: 1;
+    border: 0;
+    border-radius: 8px;
+    padding: 0.5rem;
+    font: inherit;
+    cursor: pointer;
+  }
+  .pass-go {
+    background: #fff;
+    color: #111;
+  }
+  .pass-skip {
+    background: rgba(255, 255, 255, 0.12);
+    color: #f5f5f7;
+  }
+  .pass-go:disabled,
+  .pass-skip:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
   .page {
     min-height: 100vh;
     position: relative;

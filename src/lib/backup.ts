@@ -10,6 +10,9 @@ export type ExportOptions = {
   includeApiKey: boolean;
 };
 
+/** 账号备份加密前的整份打包：含图标和密钥。 */
+export const FULL_EXPORT: ExportOptions = { includeIcons: true, includeApiKey: true };
+
 /**
  * 导出 `.ytab` ZIP。
  * `$state` 代理不能 `structuredClone`，用 JSON 深拷贝。
@@ -167,13 +170,4 @@ function blobToDataUrl(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
-}
-
-export function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }

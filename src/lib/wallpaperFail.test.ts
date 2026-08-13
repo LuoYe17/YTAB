@@ -12,7 +12,7 @@ describe('wallpaperFailHint', () => {
   it('筛空：指向纯度与分类', () => {
     const hint = wallpaperFailHint('empty');
     expect(hint.focus).toBe('filters');
-    expect(hint.link).toContain('内容尺度或分类');
+    expect(hint.link).toContain('尺度或分类');
     expect(hint.before).toContain('(´;ω;`)');
   });
 });

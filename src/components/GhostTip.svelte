@@ -1,19 +1,21 @@
 <script lang="ts">
+  import { placeFloatingTip } from '../lib/dropdownPlacement';
+
   let {
     label,
-    placement = 'ne',
     wrap = false,
     children,
   }: {
     label: string;
-    /** ne / nw 在锚点上方，se 在下方（设置里问号说明朝下，免得被顶栏裁切）。 */
-    placement?: 'ne' | 'nw' | 'se';
     wrap?: boolean;
     children: import('svelte').Snippet;
   } = $props();
 
   let show = $state(false);
   let timer = 0;
+  let host = $state<HTMLElement | null>(null);
+  let tipEl = $state<HTMLElement | null>(null);
+  let pos = $state({ top: 0, left: 0 });
 
   function enter() {
     window.clearTimeout(timer);
@@ -26,14 +28,43 @@
     window.clearTimeout(timer);
     show = false;
   }
+
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
+
+  $effect(() => {
+    if (!show || !host || !tipEl) return;
+    const place = () => {
+      if (!host || !tipEl) return;
+      pos = placeFloatingTip(host.getBoundingClientRect(), tipEl.getBoundingClientRect(), {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+    place();
+  });
 </script>
 
-<div class="wrap" role="group" onpointerenter={enter} onpointerleave={leave}>
+<div bind:this={host} class="wrap" role="group" onpointerenter={enter} onpointerleave={leave}>
   {@render children()}
-  {#if show}
-    <span class="tip {placement}" class:long={wrap} role="tooltip">{label}</span>
-  {/if}
 </div>
+{#if show}
+  <span
+    bind:this={tipEl}
+    use:portal
+    class="tip"
+    class:long={wrap}
+    role="tooltip"
+    style:top="{pos.top}px"
+    style:left="{pos.left}px">{label}</span
+  >
+{/if}
 
 <style>
   .wrap {
@@ -41,9 +72,8 @@
     display: inline-grid;
   }
   .tip {
-    position: absolute;
-    bottom: calc(100% + 8px);
-    z-index: 8;
+    position: fixed;
+    z-index: 80;
     padding: 0.28rem 0.5rem;
     border-radius: 6px;
     background: rgba(20, 20, 24, 0.88);
@@ -55,17 +85,6 @@
     white-space: nowrap;
     pointer-events: none;
     animation: tip-in 0.16s ease;
-  }
-  .ne {
-    left: 50%;
-  }
-  .nw {
-    right: 50%;
-  }
-  .se {
-    top: calc(100% + 8px);
-    bottom: auto;
-    left: 50%;
   }
   .long {
     white-space: normal;

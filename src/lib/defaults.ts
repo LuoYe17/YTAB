@@ -60,6 +60,19 @@ export function normalizeUrl(input: string): string {
   return trimmed;
 }
 
+/** 输入停住后再抓：还没域名时不发请求。 */
+export function urlReadyToFetch(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed || /^https?:\/\/$/i.test(trimmed)) return false;
+  try {
+    const host = new URL(normalizeUrl(trimmed)).hostname;
+    if (host === 'localhost' || host.endsWith('.localhost')) return true;
+    return host.includes('.') && /[a-z0-9]/i.test(host) && !host.endsWith('.');
+  } catch {
+    return false;
+  }
+}
+
 export function buildAuthorDefaultApps(): AppItem[] {
   return AUTHOR_DEFAULT_APPS.map((a) => createAppFromUrl(a.url, a.name));
 }

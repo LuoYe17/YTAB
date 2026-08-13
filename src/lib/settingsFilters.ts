@@ -165,7 +165,7 @@ function withPoolFlag(prev: Settings, next: Settings): FilterResult {
  * 一次壁纸筛选控件操作收成新设置。小弹窗只展示 notice 并回写。
  * @param settings 当前设置
  * @param action 纯度 / 分类 / 标签 / 排序 / 密钥
- * @returns 关最后一项纯度或分类时 settings 原样，notice 为「内容尺度至少开一项」/「分类至少开一项」，invalidatePool 为 false。
+ * @returns 关最后一项纯度或分类时 settings 原样，notice 为「尺度至少开一项」/「分类至少开一项」，invalidatePool 为 false。
  *   没密钥开「少儿不宜」与 `togglePurity` 一样无效。改分类会丢掉当前菜单里没有的已选标签。
  *   invalidatePool 仅当纯度 / 分类 / 排序 / 标签真的变了（清空密钥若因此关了「少儿不宜」也算）。
  */
@@ -173,7 +173,7 @@ export function applyFilter(settings: Settings, action: FilterAction): FilterRes
   switch (action.type) {
     case 'purity': {
       if (isTurningOffLast(settings.wallhavenPurity, action.key, action.on)) {
-        return { settings, notice: '内容尺度至少开一项', invalidatePool: false };
+        return { settings, notice: '尺度至少开一项', invalidatePool: false };
       }
       const wallhavenPurity = togglePurity(
         settings.wallhavenPurity,

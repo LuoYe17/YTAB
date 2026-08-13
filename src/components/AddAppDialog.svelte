@@ -3,8 +3,9 @@
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { AppItem } from '../lib/types';
-  import { createAppFromUrl, hostnameFallback, normalizeUrl } from '../lib/defaults';
+  import { createAppFromUrl, hostnameFallback, normalizeUrl, urlReadyToFetch } from '../lib/defaults';
   import { resolveAppIcon, srcFor } from '../lib/appIcons';
+  import GhostTip from './GhostTip.svelte';
 
   let {
     initial = null,
@@ -23,14 +24,21 @@
   let name = $state(initial?.name ?? '');
   /* svelte-ignore state_referenced_locally */
   let icon = $state(initial?.icon ?? '');
-  let fetching = $state(false);
+  /* svelte-ignore state_referenced_locally */
+  let iconField = $state(publicIconField(initial?.icon ?? ''));
+  let phase = $state<'idle' | 'scan' | 'success'>('idle');
+  /* svelte-ignore state_referenced_locally */
+  let canSave = $state(!!initial);
   let saving = $state(false);
   let fileError = $state('');
   let imgFailed = $state(false);
   let fileEl = $state<HTMLInputElement | null>(null);
+  let urlEl = $state<HTMLInputElement | null>(null);
   let sheetEl = $state<HTMLFormElement | null>(null);
   let autofillJob: Promise<void> | null = null;
   let autofillGen = 0;
+  /* svelte-ignore state_referenced_locally */
+  let lastFetched = initial ? normalizeUrl(initial.url) : '';
 
   const preview = $derived(
     srcFor({ id: initial?.id ?? '', kind: 'app', name, url, icon }),
@@ -48,7 +56,7 @@
   }
 
   $effect(() => {
-    // aria-modal 不会锁 Tab；打开落到第一个可改的框，关掉把焦点还回去。
+    // aria-modal 不会锁 Tab；打开落到网址框，关掉把焦点还回去。
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -74,7 +82,7 @@
     };
     window.addEventListener('keydown', onKey, true);
     void tick().then(() => {
-      sheetEl?.querySelector<HTMLElement>('input:not(.sr)')?.focus();
+      urlEl?.focus();
     });
     return () => {
       window.removeEventListener('keydown', onKey, true);
@@ -82,54 +90,95 @@
     };
   });
 
-  async function autofill() {
-    const normalized = normalizeUrl(url);
-    url = normalized;
-    if (!name.trim()) name = hostnameFallback(normalized);
-    fetching = true;
-    const jobUrl = normalized;
-    const jobId = ++autofillGen;
-    const stillCurrent = () => jobId === autofillGen && url === jobUrl;
-    const job = (async () => {
-      const signal = AbortSignal.timeout(8000);
-      try {
-        if (!icon.trim()) {
-          const resolved = await Promise.race([
-            resolveAppIcon(normalized),
-            new Promise<string>((r) => {
-              signal.addEventListener('abort', () => r(''), { once: true });
-            }),
-          ]);
-          if (!stillCurrent()) return;
-          if (!icon.trim()) icon = resolved;
-        }
-        // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
-        const res = await fetch(normalized, { method: 'GET', signal });
-        if (!stillCurrent()) return;
-        if (res.ok) {
-          const html = await res.text();
-          if (!stillCurrent()) return;
-          const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-          if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
-        }
-      } catch {
-        // keep hostname / icon fallbacks
-      }
-    })();
-    autofillJob = job;
-    try {
-      await job;
-    } finally {
-      // 旧任务回来不能改当前框，也不能把仍在跑的 fetching 清掉。
-      if (jobId === autofillGen) {
-        fetching = false;
-        if (autofillJob === job) autofillJob = null;
-      }
-    }
+  function sleep(ms: number) {
+    return new Promise<void>((r) => setTimeout(r, ms));
   }
 
-  function onUrlBlur() {
-    if (url.trim()) void autofill();
+  /** 输入框只给人看/填的 http 地址；自动抓到的 data: 不摊进去。 */
+  function publicIconField(value: string): string {
+    return /^https?:\/\//i.test(value.trim()) ? value : '';
+  }
+
+  function applyIconField() {
+    const v = iconField.trim();
+    if (/^https?:\/\//i.test(v) || v.startsWith('data:')) icon = v;
+  }
+
+  $effect(() => {
+    const raw = url;
+    const ready = urlReadyToFetch(raw);
+    const next = ready ? normalizeUrl(raw) : '';
+    if (!ready || next !== lastFetched) canSave = false;
+    if (!ready) return;
+    if (next === lastFetched) return;
+    if (phase === 'success') phase = 'idle';
+    const timer = window.setTimeout(() => {
+      void autofill();
+    }, 480);
+    return () => window.clearTimeout(timer);
+  });
+
+  async function autofill() {
+    if (!urlReadyToFetch(url)) return;
+    const normalized = normalizeUrl(url);
+    if (normalized === lastFetched) return;
+    lastFetched = normalized;
+    url = normalized;
+    if (!name.trim()) name = hostnameFallback(normalized);
+    phase = 'scan';
+    const jobUrl = normalized;
+    const jobId = ++autofillGen;
+    const started = Date.now();
+    const stillCurrent = () => jobId === autofillGen && normalizeUrl(url) === jobUrl;
+    const signal = AbortSignal.timeout(8000);
+    const iconTask = (async () => {
+      if (publicIconField(iconField)) return;
+      try {
+        const resolved = await Promise.race([
+          resolveAppIcon(normalized),
+          new Promise<string>((r) => {
+            signal.addEventListener('abort', () => r(''), { once: true });
+          }),
+        ]);
+        if (!stillCurrent() || publicIconField(iconField)) return;
+        icon = resolved;
+      } catch {
+        /* 回退字母占位 */
+      }
+    })();
+    const titleTask = (async () => {
+      try {
+        const res = await fetch(normalized, { method: 'GET', signal });
+        if (!stillCurrent() || !res.ok) return;
+        const html = await res.text();
+        if (!stillCurrent()) return;
+        const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+        if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
+      } catch {
+        /* 标题常被 CORS 挡，名称已有主机名 */
+      }
+    })();
+    const job = Promise.all([iconTask, titleTask]).then(() => {});
+    autofillJob = job;
+    try {
+      await iconTask;
+      if (!stillCurrent()) {
+        if (jobId === autofillGen) phase = 'idle';
+        return;
+      }
+      const left = 700 - (Date.now() - started);
+      if (left > 0) await sleep(left);
+      if (!stillCurrent()) {
+        if (jobId === autofillGen) phase = 'idle';
+        return;
+      }
+      phase = 'success';
+      canSave = true;
+      await sleep(650);
+      if (jobId === autofillGen) phase = 'idle';
+    } finally {
+      if (autofillJob === job) autofillJob = null;
+    }
   }
 
   function onPickedFile(file: File) {
@@ -142,6 +191,7 @@
     const reader = new FileReader();
     reader.onload = () => {
       icon = String(reader.result);
+      iconField = '';
     };
     reader.readAsDataURL(file);
   }
@@ -155,7 +205,8 @@
 
   async function submit(e: Event) {
     e.preventDefault();
-    if (!url.trim() || saving) return;
+    if (!canSave || !url.trim() || saving) return;
+    if (urlReadyToFetch(url) && normalizeUrl(url) !== lastFetched) void autofill();
     if (autofillJob) await autofillJob;
     const normalized = normalizeUrl(url);
     saving = true;
@@ -173,71 +224,142 @@
   }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="app-dlg-title" transition:fade={{ duration: 160 }}>
+{#snippet helpMark(text: string)}
+  <GhostTip label={text} placement="se" wrap>
+    <button type="button" class="help" aria-label={text}>?</button>
+  </GhostTip>
+{/snippet}
+
+<div
+  class="overlay"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="app-dlg-title"
+  in:fade={{ duration: 180 }}
+  out:fade={{ duration: 160 }}
+>
   <button type="button" class="backdrop" aria-label="关闭" onclick={onCancel}></button>
   <form
     bind:this={sheetEl}
     class="sheet ios-sheet"
     onsubmit={submit}
-    transition:scale={{ duration: 200, start: 0.96, easing: cubicOut }}
+    in:scale={{ duration: 240, start: 0.9, easing: cubicOut }}
+    out:scale={{ duration: 200, start: 0.9, easing: cubicOut }}
   >
     <header>
-      <button type="button" class="icon-btn ios-tile" onclick={() => fileEl?.click()} aria-label="更换图标">
-        {#if preview && !imgFailed}
-          <img
-            src={preview}
-            alt=""
-            onerror={() => {
-              imgFailed = true;
-            }}
-          />
-        {:else}
-          <span class="ph">{glyph}</span>
-        {/if}
-      </button>
-      <input
-        bind:this={fileEl}
-        class="sr"
-        type="file"
-        accept=".png,.jpg,.jpeg,.svg,.webp,image/*"
-        onchange={onFileChange}
-        tabindex="-1"
-      />
       <h2 id="app-dlg-title">{initial ? '编辑 App' : '添加 App'}</h2>
       <button type="button" class="close" onclick={onCancel} aria-label="关闭">×</button>
     </header>
 
     <div class="block">
       <div class="head">
-        <span class="title">名称</span>
-        <span class="hint">显示在图标下方，可随便改</span>
-      </div>
-      <input bind:value={name} placeholder="自动获取后可改" />
-    </div>
-
-    <div class="block">
-      <div class="head">
         <span class="title">网址</span>
-        <span class="hint">失焦后会尝试抓名称和图标</span>
+        {@render helpMark('填网站地址。输入完就会自动抓名称和图标。')}
       </div>
-      <input bind:value={url} onblur={onUrlBlur} placeholder="https://" required />
+      <input bind:this={urlEl} bind:value={url} placeholder="https://" required />
     </div>
 
     <div class="block">
       <div class="head">
-        <span class="title">图标链接</span>
-        <span class="hint">可填图片地址，或点左上角图标从本地选</span>
+        <span class="title">名称</span>
+        {@render helpMark('显示在图标下面。自动抓到后也能改。')}
       </div>
-      <input bind:value={icon} placeholder="自动获取 / 图片链接" />
+      <input bind:value={name} placeholder="留空则用网站名" />
+    </div>
+
+    <div class="block">
+      <div class="head">
+        <span class="title">图标</span>
+        {@render helpMark('可填图片地址，或点左侧从本地选图。')}
+      </div>
+      <div class="icon-row">
+        <button
+          type="button"
+          class="icon-btn ios-tile"
+          onclick={() => fileEl?.click()}
+          aria-label={phase === 'scan' ? '正在获取' : phase === 'success' ? '已获取' : '更换图标'}
+          aria-busy={phase === 'scan'}
+          disabled={phase !== 'idle'}
+        >
+          {#if preview && !imgFailed}
+            <img
+              src={preview}
+              alt=""
+              class:dim={phase !== 'idle'}
+              onerror={() => {
+                imgFailed = true;
+              }}
+            />
+          {:else}
+            <span class="ph" class:dim={phase !== 'idle'}>{glyph}</span>
+          {/if}
+          {#if phase === 'scan'}
+            <span class="faceid" aria-hidden="true">
+              <svg viewBox="0 0 64 64" width="40" height="40">
+                <circle class="faceid-track" cx="32" cy="32" r="22" />
+                <circle class="faceid-arc" cx="32" cy="32" r="22" />
+                <g class="faceid-mark" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+                  <path stroke-width="2.4" d="M22 26V22h4" />
+                  <path stroke-width="2.4" d="M42 22h4v4" />
+                  <path stroke-width="2.4" d="M46 42v4h-4" />
+                  <path stroke-width="2.4" d="M26 46h-4v-4" />
+                  <ellipse cx="32" cy="33" rx="7.5" ry="9" stroke-width="2" />
+                  <circle cx="29.2" cy="31.5" r="1.15" fill="#fff" stroke="none" />
+                  <circle cx="34.8" cy="31.5" r="1.15" fill="#fff" stroke="none" />
+                  <path stroke-width="1.8" d="M32 33.2v3.2" />
+                </g>
+              </svg>
+            </span>
+          {:else if phase === 'success'}
+            <span class="ok" aria-hidden="true" out:fade={{ duration: 380 }}>
+              <svg viewBox="0 0 64 64" width="40" height="40">
+                <circle class="success-ring" cx="32" cy="32" r="22" />
+                <path
+                  class="success-check"
+                  fill="none"
+                  stroke="#34c759"
+                  stroke-width="3.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M20 33.5 28.5 42 44 24"
+                />
+              </svg>
+            </span>
+          {/if}
+        </button>
+        <input
+          bind:this={fileEl}
+          class="sr"
+          type="file"
+          accept=".png,.jpg,.jpeg,.svg,.webp,image/*"
+          onchange={onFileChange}
+          tabindex="-1"
+        />
+        <input
+          bind:value={iconField}
+          oninput={applyIconField}
+          placeholder="自动获取，也可填链接"
+        />
+      </div>
     </div>
 
     {#if fileError}
       <p class="err">{fileError}</p>
     {/if}
 
-    <div class="row">
+    <div class="row" class:ready={canSave}>
       <button type="button" class="ghost" onclick={onCancel}>取消</button>
-      <button type="submit" class="action" disabled={saving}>{fetching || saving ? '获取中…' : '保存'}</button>
+      <div class="save-slot">
+        <button
+          type="submit"
+          class="action"
+          disabled={!canSave || saving}
+          tabindex={canSave ? 0 : -1}
+          aria-hidden={!canSave}
+        >
+          {saving ? '保存中…' : '保存'}
+        </button>
+      </div>
     </div>
   </form>
 </div>
@@ -262,6 +384,7 @@
   .sheet {
     position: relative;
     z-index: 1;
+    transform-origin: center center;
     width: min(420px, 92vw);
     background: rgba(28, 28, 32, 0.52);
     backdrop-filter: blur(28px) saturate(1.25);
@@ -278,7 +401,7 @@
     display: flex;
     align-items: center;
     gap: 0.7rem;
-    padding: 0.85rem 0 0.15rem;
+    padding: 0.95rem 0 0.1rem;
   }
   h2 {
     margin: 0;
@@ -290,6 +413,8 @@
   }
   .close {
     appearance: none;
+    flex-shrink: 0;
+    margin: 0;
     border: 0;
     background: transparent;
     color: inherit;
@@ -302,12 +427,21 @@
   .close:hover {
     opacity: 1;
   }
+  .icon-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .icon-row input:not(.sr) {
+    flex: 1;
+    min-width: 0;
+  }
   .icon-btn {
     appearance: none;
     position: relative;
     flex-shrink: 0;
-    width: 52px;
-    height: 52px;
+    width: 44px;
+    height: 44px;
     margin: 0;
     padding: 0;
     border: 0;
@@ -319,6 +453,14 @@
     cursor: pointer;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   }
+  .icon-btn:disabled {
+    cursor: default;
+  }
+  .icon-btn img,
+  .ph {
+    opacity: 1;
+    transition: opacity 0.38s ease;
+  }
   .icon-btn img {
     width: 100%;
     height: 100%;
@@ -326,9 +468,76 @@
     display: block;
     pointer-events: none;
   }
+  .icon-btn img.dim,
+  .ph.dim {
+    opacity: 0.22;
+  }
   .ph {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     font-weight: 650;
+  }
+  .faceid,
+  .ok {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.48);
+    pointer-events: none;
+  }
+  .faceid-track {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.22);
+    stroke-width: 3;
+  }
+  .faceid-arc {
+    fill: none;
+    stroke: #fff;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 42 96;
+    transform-origin: 32px 32px;
+    animation: faceid-spin 0.9s linear infinite;
+  }
+  .faceid-mark {
+    animation: faceid-pulse 0.9s ease-in-out infinite;
+  }
+  .success-ring {
+    fill: none;
+    stroke: #34c759;
+    stroke-width: 3;
+    stroke-dasharray: 140;
+    stroke-dashoffset: 140;
+    animation: ring-draw 0.42s ease forwards;
+  }
+  .success-check {
+    stroke-dasharray: 36;
+    stroke-dashoffset: 36;
+    animation: check-draw 0.32s 0.18s ease forwards;
+  }
+  @keyframes faceid-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes faceid-pulse {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes ring-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes check-draw {
+    to {
+      stroke-dashoffset: 0;
+    }
   }
   .block {
     display: flex;
@@ -346,10 +555,24 @@
   .title {
     font-weight: 600;
   }
-  .hint {
+  .help {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    background: transparent;
     color: rgba(255, 255, 255, 0.48);
-    font-size: 0.75rem;
-    line-height: 1.2;
+    font: inherit;
+    font-size: 0.68rem;
+    line-height: 1;
+    cursor: help;
+  }
+  .help:hover {
+    color: rgba(255, 255, 255, 0.88);
+    border-color: rgba(255, 255, 255, 0.5);
   }
   input:not(.sr) {
     width: 100%;
@@ -379,37 +602,60 @@
     font-size: 0.8rem;
   }
   .row {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
+    display: grid;
+    grid-template-columns: 1fr 0fr;
+    gap: 0;
     margin-top: 0.15rem;
+    transition:
+      grid-template-columns 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+      gap 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .row.ready {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+  .save-slot {
+    min-width: 0;
+    overflow: hidden;
+    display: grid;
   }
   .action,
   .ghost {
     appearance: none;
+    width: 100%;
     border: 0;
     border-radius: 8px;
     padding: 0.45rem 0.9rem;
     cursor: pointer;
     font: inherit;
-    transition: background 0.15s ease;
+    white-space: nowrap;
   }
   .action {
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
+    background: #fff;
+    color: #111;
+    opacity: 0;
+    transform: scale(0.88);
+    pointer-events: none;
+    transition:
+      opacity 0.22s ease,
+      transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+      background 0.15s ease;
+  }
+  .row.ready .action {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
   }
   .action:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.24);
-  }
-  .action:disabled {
-    opacity: 0.6;
+    background: #f2f2f7;
   }
   .ghost {
-    background: transparent;
-    color: inherit;
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    transition: background 0.15s ease;
   }
   .ghost:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.28);
   }
 </style>

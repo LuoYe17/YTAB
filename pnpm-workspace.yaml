@@ -1,2 +1,10 @@
+packages:
+  - '.'
+  - 'cloud'
+
+allowBuilds:
+  esbuild: true
+  workerd: true
+
 minimumReleaseAgeExclude:
   - wxt@0.21.4

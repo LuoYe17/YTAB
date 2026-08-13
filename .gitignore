@@ -13,6 +13,8 @@ stats.html
 stats-*.json
 .wxt
 web-ext.config.ts
+cloud/.dev.vars
+cloud/.wrangler
 
 # Local scratch (issue tracker); keep structure if committed later
 .scratch/

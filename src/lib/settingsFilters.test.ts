@@ -130,7 +130,7 @@ describe('applyFilter', () => {
     };
     const result = applyFilter(settings, { type: 'purity', key: 'sfw', on: false });
     expect(result.settings).toBe(settings);
-    expect(result.notice).toBe('内容尺度至少开一项');
+    expect(result.notice).toBe('尺度至少开一项');
     expect(result.invalidatePool).toBe(false);
   });
 

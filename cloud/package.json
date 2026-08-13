@@ -1,0 +1,14 @@
+{
+  "name": "ytab-account",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cf-login": "wrangler login",
+    "dev": "wrangler dev",
+    "cf-deploy": "wrangler deploy",
+    "secret": "wrangler secret put"
+  },
+  "devDependencies": {
+    "wrangler": "^4.28.0"
+  }
+}

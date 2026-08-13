@@ -7,6 +7,7 @@
  */
 
 import type { AppGridEvent } from './appGrid';
+import type { Clock } from './clock';
 import {
   cellHit,
   hitEdgeRelative,
@@ -24,19 +25,6 @@ export const OUTSIDE_DWELL_MS = 320;
 export const PAGE_EDGE_PX = 44;
 export const PAGE_FLIP_DWELL_MS = 400;
 export const PAGE_FLIP_COOLDOWN_MS = 650;
-
-/** 时间口。测试传假时钟，生产传 `realClock`。 */
-export type Clock = {
-  now(): number;
-  setTimeout(fn: () => void, ms: number): number;
-  clearTimeout(id: number): void;
-};
-
-export const realClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (fn, ms) => window.setTimeout(fn, ms),
-  clearTimeout: (id) => window.clearTimeout(id),
-};
 
 export type Scope = 'page' | 'folder';
 

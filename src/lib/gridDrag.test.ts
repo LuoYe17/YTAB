@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AppGridEvent } from './appGrid';
+import type { Clock } from './clock';
 import {
   INSERT_DWELL_MS,
   MERGE_DWELL_MS,
@@ -7,7 +8,6 @@ import {
   PAGE_FLIP_COOLDOWN_MS,
   PAGE_FLIP_DWELL_MS,
   createGridDragSession,
-  type Clock,
   type DragVisuals,
   type PageDropTarget,
   type Scope,

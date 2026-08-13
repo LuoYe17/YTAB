@@ -5,9 +5,9 @@
   import type { GridItem } from '../lib/types';
   import { srcFor } from '../lib/appIcons';
   import { readGridMetrics, type HitBand } from '../lib/gridInsertGeometry';
+  import { realClock } from '../lib/clock';
   import {
     createGridDragSession,
-    realClock,
     type DragEventFor,
     type DragVisuals,
     type PageDropTarget,

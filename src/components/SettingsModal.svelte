@@ -15,6 +15,7 @@
   import {
     clearSession,
     formatBackupAt,
+    ensureAvatar,
     loadSession,
     saveSession,
     sessionFromAuth,
@@ -96,9 +97,15 @@
   const unlocked = $derived(sessionUnlocked(session));
 
   $effect(() => {
-    void loadSession().then((s) => {
-      session = s;
-    });
+    // 这里要画头像，缺了就顺手补一次；其余读会话的地方不该因此写盘。
+    void loadSession()
+      .then((s) => {
+        session = s;
+        return ensureAvatar(s);
+      })
+      .then((s) => {
+        session = s;
+      });
   });
 
   $effect(() => {

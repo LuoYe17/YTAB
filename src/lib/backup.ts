@@ -5,49 +5,31 @@ import type { YtabState } from './types';
 const META_NAME = 'ytab.json';
 const ICONS_DIR = 'icons/';
 
-export type ExportOptions = {
-  includeIcons: boolean;
-  includeApiKey: boolean;
-};
-
-/** 账号备份加密前的整份打包：含图标和密钥。 */
-export const FULL_EXPORT: ExportOptions = { includeIcons: true, includeApiKey: true };
-
 /**
- * 导出 `.ytab` ZIP。
+ * 打包整份状态（含图标与密钥），供账号备份加密后上传。
  * `$state` 代理不能 `structuredClone`，用 JSON 深拷贝。
- * 不含图标时（以及打包失败的残留）把本地引用改成站点 favicon，避免换机后无法解析。
+ * 打包失败的残留引用改成站点 favicon，避免换机后无法解析。
  */
-export async function exportYtab(
-  state: YtabState,
-  options: ExportOptions,
-): Promise<Blob> {
+export async function exportYtab(state: YtabState): Promise<Blob> {
   const zip = new JSZip();
   let clone: YtabState = JSON.parse(JSON.stringify(state)) as YtabState;
 
-  if (!options.includeApiKey) {
-    clone.settings.wallhavenApiKey = '';
-    clone.settings.wallhavenKeyOk = false;
-  }
-
   const iconMap: Record<string, string> = {};
 
-  if (options.includeIcons) {
-    for (const page of clone.pages) {
-      for (const item of page) {
-        if (item.kind === 'app') {
-          await packIcon(zip, item.id, item.icon, iconMap);
-          if (iconMap[item.id]) item.icon = `icon:${item.id}`;
-        } else {
-          for (const child of item.children) {
-            await packIcon(zip, child.id, child.icon, iconMap);
-            if (iconMap[child.id]) child.icon = `icon:${child.id}`;
-          }
+  for (const page of clone.pages) {
+    for (const item of page) {
+      if (item.kind === 'app') {
+        await packIcon(zip, item.id, item.icon, iconMap);
+        if (iconMap[item.id]) item.icon = `icon:${item.id}`;
+      } else {
+        for (const child of item.children) {
+          await packIcon(zip, child.id, child.icon, iconMap);
+          if (iconMap[child.id]) child.icon = `icon:${child.id}`;
         }
       }
     }
   }
-  clone = stripLocalIcons(clone, options.includeIcons);
+  clone = stripLocalIcons(clone, true);
 
   zip.file(
     META_NAME,
@@ -118,14 +100,15 @@ function guessExt(mime: string | null, url: string): string {
 export async function importYtab(file: Blob): Promise<YtabState> {
   const zip = await JSZip.loadAsync(file);
   const metaFile = zip.file(META_NAME);
-  if (!metaFile) throw new Error('无效的 .ytab：缺少 ytab.json');
+  // 文案会直接弹给用户，别提 .ytab / ytab.json 这些他从没见过的内部名字。
+  if (!metaFile) throw new Error('云端备份不完整');
 
   const meta = JSON.parse(await metaFile.async('string')) as {
     state: YtabState;
   };
   const state = meta.state;
   if (!state?.settings || !state.pages) {
-    throw new Error('无效的 .ytab：状态损坏');
+    throw new Error('云端备份内容损坏');
   }
 
   for (const page of state.pages) {

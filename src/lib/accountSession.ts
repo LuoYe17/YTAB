@@ -25,20 +25,26 @@ const store = storage.defineItem<AccountSession | null>('local:ytab:account:v1',
   fallback: null,
 });
 
-/**
- * 读这台记住的登录。没有头像时猜 GitHub 地址并尽量缓存成 data URL。
- * 读路径会写回存储（补头像），调用方不要假设纯读取。
- */
+/** 读这台记住的登录。纯读，不写盘。 */
 export async function loadSession(): Promise<AccountSession | null> {
-  const s = (await store.getValue()) ?? null;
-  if (!s) return null;
-  if (s.avatar) return s;
-  const guessed = `https://avatars.githubusercontent.com/u/${encodeURIComponent(s.userId)}?v=4`;
-  const avatar = await cacheAvatar(guessed);
-  if (!avatar) return s;
-  const next = { ...s, avatar };
+  return (await store.getValue()) ?? null;
+}
+
+/**
+ * 补上缺失的头像并写回，供要显示头像的地方调用。
+ * 与 `loadSession` 分开：读一份登录不该顺带落盘。
+ */
+export async function ensureAvatar(session: AccountSession | null): Promise<AccountSession | null> {
+  if (!session || session.avatar) return session;
+  const avatar = await cacheAvatar(githubAvatarUrl(session.userId));
+  if (!avatar) return session;
+  const next = { ...session, avatar };
   await store.setValue(next);
   return next;
+}
+
+function githubAvatarUrl(userId: string): string {
+  return `https://avatars.githubusercontent.com/u/${encodeURIComponent(userId)}?v=4`;
 }
 
 /** 整份覆盖这台的登录记录。传 null 等于退出。 */
@@ -73,7 +79,7 @@ export async function sessionFromAuth(auth: AuthOk): Promise<AccountSession> {
     label: auth.label,
     token: auth.token,
     hasBackup: auth.hasBackup,
-    avatar: await cacheAvatar(auth.avatar ?? `https://avatars.githubusercontent.com/u/${encodeURIComponent(auth.userId)}?v=4`),
+    avatar: await cacheAvatar(auth.avatar ?? githubAvatarUrl(auth.userId)),
   };
 }
 

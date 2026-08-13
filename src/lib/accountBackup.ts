@@ -10,7 +10,7 @@ import {
   type CipherBundle,
 } from './accountCrypto';
 import { loadSession, saveSession, sessionUnlocked, type AccountSession } from './accountSession';
-import { exportYtab, FULL_EXPORT, importYtab } from './backup';
+import { exportYtab, importYtab } from './backup';
 import { plainNotice } from './notice';
 import type { YtabState } from './types';
 
@@ -21,7 +21,7 @@ let pending: YtabState | null = null;
 let inflight: Promise<void> = Promise.resolve();
 
 async function packPlain(state: YtabState): Promise<Uint8Array> {
-  const blob = await exportYtab(state, FULL_EXPORT);
+  const blob = await exportYtab(state);
   return new Uint8Array(await blob.arrayBuffer());
 }
 

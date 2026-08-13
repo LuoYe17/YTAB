@@ -21,8 +21,8 @@
   } from '../../lib/appGrid';
   import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
-  import { applyBundledIcons, bundledIconDataUrls } from '../../lib/appIcons';
   import { downloadBlob, exportYtab, importYtab } from '../../lib/backup';
+  import { applyImportedState } from '../../lib/importApply';
   import {
     createEmptyState,
     type AppItem,
@@ -75,18 +75,6 @@
       loadFailed = true;
       ready = true;
       return;
-    }
-    if (!localStorage.getItem('ytab:icon-bundle-v10')) {
-      try {
-        const bundled = await bundledIconDataUrls();
-        if (bundled.size > 0) {
-          ytab = applyBundledIcons(ytab, bundled);
-          await saveState(ytab);
-        }
-      } catch {
-        /* 内置图升级失败不挡起始页 */
-      }
-      localStorage.setItem('ytab:icon-bundle-v10', '1');
     }
     grid = createAppGridView(ytab.pages, 0);
     displayUrl = ytab.wallpaper.imageUrl;
@@ -222,48 +210,42 @@
     addOpen = false;
   }
 
-  async function onSettingsChange(settings: Settings) {
-    const prev = ytab.settings;
-    const filterChanged =
-      JSON.stringify(prev.wallhavenPurity) !== JSON.stringify(settings.wallhavenPurity) ||
-      JSON.stringify(prev.wallhavenCategories) !== JSON.stringify(settings.wallhavenCategories) ||
-      (prev.wallhavenSorting || 'toplist') !== (settings.wallhavenSorting || 'toplist') ||
-      JSON.stringify(prev.wallhavenTags ?? []) !== JSON.stringify(settings.wallhavenTags ?? []);
+  async function onSettingsChange(settings: Settings, invalidatePool = false) {
     await persist((p) => ({ ...p, settings }));
-    if (filterChanged) {
+    if (invalidatePool) {
       wallpaperPool.clear();
       schedulePoolFill(settings);
     }
   }
 
-  async function onImportState(next: YtabState) {
-    wallpaperPool.clear();
-    await persist(() => ({ ...next, onboardingDone: true }));
-    displayUrl = next.wallpaper.imageUrl;
+  async function landImported(applied: ReturnType<typeof applyImportedState>) {
+    if (applied.invalidatePool) wallpaperPool.clear();
+    await persist(() => applied.state);
+    displayUrl = applied.displayUrl;
     settingsOpen = false;
     settingsHighlight = null;
-    grid = createAppGridView(next.pages, 0);
-    schedulePoolFill(next.settings);
+    grid = createAppGridView(applied.state.pages, 0);
   }
 
-  async function onExportBackup(opts: { includeIcons: boolean; includeApiKey: boolean }) {
+  async function onImportState(next: YtabState) {
+    const applied = applyImportedState(next);
+    await landImported(applied);
+    schedulePoolFill(applied.state.settings);
+  }
+
+  async function onExportFile(opts: { includeIcons: boolean; includeApiKey: boolean }) {
     const snap = $state.snapshot(ytab);
     const blob = await exportYtab({ ...snap, pages: $state.snapshot(grid).pages }, opts);
-    downloadBlob(blob, `ytab-backup-${new Date().toISOString().slice(0, 10)}.ytab`);
+    downloadBlob(blob, `ytab-${new Date().toISOString().slice(0, 10)}.ytab`);
   }
 
-  async function onImportBackup(file: File) {
+  async function onImportFile(file: File) {
     const state = await importYtab(file);
     await onImportState(state);
   }
 
   async function onResetAll() {
-    wallpaperPool.clear();
-    await persist(() => createEmptyState());
-    displayUrl = '';
-    settingsOpen = false;
-    settingsHighlight = null;
-    grid = createAppGridView();
+    await landImported(applyImportedState(createEmptyState(), { endFirstRun: false }));
     addOpen = false;
     editingApp = null;
     plainNotice('ok', '已重置');
@@ -369,8 +351,8 @@
         settingsHighlight = null;
       }}
       onChange={onSettingsChange}
-      onExport={onExportBackup}
-      onImport={onImportBackup}
+      onExport={onExportFile}
+      onImport={onImportFile}
       onResetAll={onResetAll}
     />
   {/if}

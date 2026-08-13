@@ -1,6 +1,7 @@
 /** 壁纸：Wallhaven 拉取、内存预取池、换图会话。一次成图；上屏与 persist 由调用方负责。 */
 
-import { DEFAULT_SETTINGS, type Settings, type WallpaperState } from './types';
+import type { Settings, WallpaperState } from './types';
+import { visibleTagPresets } from './settingsFilters';
 import type { WallpaperFailReason } from './wallpaperFail';
 
 const POOL_SIZE = 3;
@@ -49,75 +50,6 @@ export function purityParam(p: Settings['wallhavenPurity']): string {
 export function categoriesParam(c: Settings['wallhavenCategories']): string {
   const bits = `${c.general ? '1' : '0'}${c.anime ? '1' : '0'}${c.people ? '1' : '0'}`;
   return bits === '000' ? '111' : bits;
-}
-
-type TagPreset = { id: string; label: string };
-type CategoryKey = keyof Settings['wallhavenCategories'];
-
-/** 各分类自己的一小撮词；多开分类时按常规→动漫→人物并集，同 id 只留一次。 */
-export const WALLHAVEN_TAG_PRESETS: Record<CategoryKey, TagPreset[]> = {
-  general: [
-    { id: 'landscape', label: '风景' },
-    { id: 'nature', label: '自然' },
-    { id: 'cityscape', label: '城市' },
-    { id: 'architecture', label: '建筑' },
-    { id: 'minimalism', label: '极简' },
-    { id: 'night', label: '夜' },
-    { id: 'stars', label: '星空' },
-    { id: 'cyberpunk', label: '赛博' },
-    { id: 'abstract', label: '抽象' },
-  ],
-  anime: [
-    { id: 'anime girls', label: '少女' },
-    { id: 'scenery', label: '场景' },
-    { id: 'sakura', label: '樱花' },
-    { id: 'rain', label: '雨' },
-    { id: 'cyberpunk', label: '赛博' },
-    { id: 'minimalism', label: '极简' },
-    { id: 'night', label: '夜' },
-    { id: 'mecha', label: '机甲' },
-    { id: 'pixel art', label: '像素' },
-  ],
-  people: [
-    { id: 'portrait', label: '人像' },
-    { id: 'woman', label: '女性' },
-    { id: 'man', label: '男性' },
-    { id: 'street', label: '街头' },
-    { id: 'fashion', label: '时尚' },
-    { id: 'model', label: '模特' },
-    { id: 'cityscape', label: '城市' },
-    { id: 'night', label: '夜' },
-    { id: 'close-up', label: '特写' },
-  ],
-};
-
-const CATEGORY_ORDER: CategoryKey[] = ['general', 'anime', 'people'];
-
-/** 当前开着的分类对应的标签菜单。 */
-export function visibleTagPresets(
-  categories: Settings['wallhavenCategories'] | null | undefined,
-): TagPreset[] {
-  const c = { ...DEFAULT_SETTINGS.wallhavenCategories, ...categories };
-  const seen = new Set<string>();
-  const out: TagPreset[] = [];
-  for (const key of CATEGORY_ORDER) {
-    if (!c[key]) continue;
-    for (const tag of WALLHAVEN_TAG_PRESETS[key]) {
-      if (seen.has(tag.id)) continue;
-      seen.add(tag.id);
-      out.push(tag);
-    }
-  }
-  return out;
-}
-
-/** 关掉某类之后，去掉菜单里已经没有的已选标签。 */
-export function tagsAfterCategoriesChange(
-  tags: string[],
-  categories: Settings['wallhavenCategories'],
-): string[] {
-  const allowed = new Set(visibleTagPresets(categories).map((t) => t.id));
-  return tags.filter((id) => allowed.has(id));
 }
 
 /**

@@ -8,6 +8,8 @@ const PAGE_CAPACITY = 19;
 export type AppGridDragSnapshot = {
   pages: GridItem[][];
   pageIndex: number;
+  /** 按下时打开中的文件夹；Esc 要连里面的换位一起回滚。 */
+  openFolder: FolderItem | null;
 };
 
 export type AppGridView = {
@@ -43,6 +45,7 @@ export type AppGridApplyResult = {
   persist: boolean;
 };
 
+/** 空网格或从已 persist 的 pages 重建 live view（页码、打开中文件夹、拖拽快照都从零计）。 */
 export function createAppGridView(
   pages: GridItem[][] = [[]],
   pageIndex = 0,
@@ -56,6 +59,7 @@ export function createAppGridView(
   };
 }
 
+/** 按每页 19 格切开；空列表仍是一页空数组。首次启动整表写入用，不走 `apply`。 */
 export function paginate(items: GridItem[]): GridItem[][] {
   if (items.length === 0) return [[]];
   const pages: GridItem[][] = [];
@@ -73,6 +77,11 @@ function rewritePages(items: GridItem[]): GridItem[][] {
   return paginate(items);
 }
 
+function cloneFolder(folder: FolderItem | null): FolderItem | null {
+  if (!folder) return null;
+  return { ...folder, children: folder.children.map((c) => ({ ...c })) };
+}
+
 function clonePages(pages: GridItem[][]): GridItem[][] {
   return pages.map((page) =>
     page.map((item) =>
@@ -83,6 +92,7 @@ function clonePages(pages: GridItem[][]): GridItem[][] {
   );
 }
 
+/** 当前页上的 App / 文件夹，缺页当空。 */
 export function currentPageItems(view: AppGridView): GridItem[] {
   return view.pages[view.pageIndex] ?? [];
 }
@@ -175,6 +185,7 @@ function beginDragSession(view: AppGridView, itemId: string): AppGridView {
     dragSnapshot: {
       pages: clonePages(view.pages),
       pageIndex: view.pageIndex,
+      openFolder: cloneFolder(view.openFolder),
     },
   };
 }
@@ -186,6 +197,7 @@ function cancelDragSession(view: AppGridView): AppGridView {
     ...view,
     pages: snap.pages,
     pageIndex: snap.pageIndex,
+    openFolder: snap.openFolder,
   });
 }
 

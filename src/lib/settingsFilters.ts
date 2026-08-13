@@ -1,6 +1,11 @@
-/** 设置里纯度/分类开关：界面不允许全关；没密钥不能开限制。 */
+/** 设置里壁纸筛选：纯度/分类/标签/排序/密钥。界面不允许全关；没密钥不能开限制。 */
 
-import type { Settings, WallhavenPurity } from './types';
+import {
+  DEFAULT_SETTINGS,
+  type Settings,
+  type WallhavenPurity,
+  type WallhavenSorting,
+} from './types';
 
 type PurityKey = keyof WallhavenPurity;
 type CategoryKey = keyof Settings['wallhavenCategories'];
@@ -50,4 +55,163 @@ export function purityAfterClearingKey(current: WallhavenPurity): WallhavenPurit
   const next = { ...current, nsfw: false };
   if (countOn(next) === 0) next.sfw = true;
   return next;
+}
+
+type TagPreset = { id: string; label: string };
+
+/** 各分类自己的一小撮词；多开分类时按常规→动漫→人物并集，同 id 只留一次。 */
+export const WALLHAVEN_TAG_PRESETS: Record<CategoryKey, TagPreset[]> = {
+  general: [
+    { id: 'landscape', label: '风景' },
+    { id: 'nature', label: '自然' },
+    { id: 'cityscape', label: '城市' },
+    { id: 'architecture', label: '建筑' },
+    { id: 'minimalism', label: '极简' },
+    { id: 'night', label: '夜' },
+    { id: 'stars', label: '星空' },
+    { id: 'cyberpunk', label: '赛博' },
+    { id: 'abstract', label: '抽象' },
+  ],
+  anime: [
+    { id: 'anime girls', label: '少女' },
+    { id: 'scenery', label: '场景' },
+    { id: 'sakura', label: '樱花' },
+    { id: 'rain', label: '雨' },
+    { id: 'cyberpunk', label: '赛博' },
+    { id: 'minimalism', label: '极简' },
+    { id: 'night', label: '夜' },
+    { id: 'mecha', label: '机甲' },
+    { id: 'pixel art', label: '像素' },
+  ],
+  people: [
+    { id: 'portrait', label: '人像' },
+    { id: 'woman', label: '女性' },
+    { id: 'man', label: '男性' },
+    { id: 'street', label: '街头' },
+    { id: 'fashion', label: '时尚' },
+    { id: 'model', label: '模特' },
+    { id: 'cityscape', label: '城市' },
+    { id: 'night', label: '夜' },
+    { id: 'close-up', label: '特写' },
+  ],
+};
+
+const CATEGORY_ORDER: CategoryKey[] = ['general', 'anime', 'people'];
+
+/** 当前开着的分类对应的标签菜单。 */
+export function visibleTagPresets(
+  categories: Settings['wallhavenCategories'] | null | undefined,
+): TagPreset[] {
+  const c = { ...DEFAULT_SETTINGS.wallhavenCategories, ...categories };
+  const seen = new Set<string>();
+  const out: TagPreset[] = [];
+  for (const key of CATEGORY_ORDER) {
+    if (!c[key]) continue;
+    for (const tag of WALLHAVEN_TAG_PRESETS[key]) {
+      if (seen.has(tag.id)) continue;
+      seen.add(tag.id);
+      out.push(tag);
+    }
+  }
+  return out;
+}
+
+/** 关掉某类之后，去掉菜单里已经没有的已选标签。 */
+export function tagsAfterCategoriesChange(
+  tags: string[],
+  categories: Settings['wallhavenCategories'],
+): string[] {
+  const allowed = new Set(visibleTagPresets(categories).map((t) => t.id));
+  return tags.filter((id) => allowed.has(id));
+}
+
+export type FilterAction =
+  | { type: 'purity'; key: PurityKey; on: boolean }
+  | { type: 'category'; key: CategoryKey; on: boolean }
+  | { type: 'tag'; id: string; on: boolean }
+  | { type: 'sorting'; value: WallhavenSorting }
+  | { type: 'setKey'; value: string };
+
+export type FilterResult = {
+  settings: Settings;
+  notice?: string;
+  invalidatePool: boolean;
+};
+
+/** 与起始页原先 JSON.stringify 比的是同一组会改搜索条件的字段。 */
+function filterQueryChanged(prev: Settings, next: Settings): boolean {
+  return (
+    JSON.stringify(prev.wallhavenPurity) !== JSON.stringify(next.wallhavenPurity) ||
+    JSON.stringify(prev.wallhavenCategories) !== JSON.stringify(next.wallhavenCategories) ||
+    (prev.wallhavenSorting || 'toplist') !== (next.wallhavenSorting || 'toplist') ||
+    JSON.stringify(prev.wallhavenTags ?? []) !== JSON.stringify(next.wallhavenTags ?? [])
+  );
+}
+
+function withPoolFlag(prev: Settings, next: Settings): FilterResult {
+  if (!filterQueryChanged(prev, next)) return { settings: prev, invalidatePool: false };
+  return { settings: next, invalidatePool: true };
+}
+
+/**
+ * 一次壁纸筛选控件操作收成新设置。小弹窗只展示 notice 并回写。
+ * @param settings 当前设置
+ * @param action 纯度 / 分类 / 标签 / 排序 / 密钥
+ * @returns 关最后一项纯度或分类时 settings 原样，notice 为「纯度至少开一项」/「分类至少开一项」，invalidatePool 为 false。
+ *   没密钥开限制与 `togglePurity` 一样无效。改分类会丢掉当前菜单里没有的已选标签。
+ *   invalidatePool 仅当纯度 / 分类 / 排序 / 标签真的变了（清空密钥若因此关了限制也算）。
+ */
+export function applyFilter(settings: Settings, action: FilterAction): FilterResult {
+  switch (action.type) {
+    case 'purity': {
+      if (isTurningOffLast(settings.wallhavenPurity, action.key, action.on)) {
+        return { settings, notice: '纯度至少开一项', invalidatePool: false };
+      }
+      const wallhavenPurity = togglePurity(
+        settings.wallhavenPurity,
+        action.key,
+        action.on,
+        settings.wallhavenApiKey.trim().length > 0,
+      );
+      return withPoolFlag(settings, { ...settings, wallhavenPurity });
+    }
+    case 'category': {
+      if (isTurningOffLast(settings.wallhavenCategories, action.key, action.on)) {
+        return { settings, notice: '分类至少开一项', invalidatePool: false };
+      }
+      const wallhavenCategories = toggleCategory(
+        settings.wallhavenCategories,
+        action.key,
+        action.on,
+      );
+      return withPoolFlag(settings, {
+        ...settings,
+        wallhavenCategories,
+        wallhavenTags: tagsAfterCategoriesChange(settings.wallhavenTags ?? [], wallhavenCategories),
+      });
+    }
+    case 'tag': {
+      const cur = settings.wallhavenTags ?? [];
+      const wallhavenTags = action.on
+        ? cur.includes(action.id)
+          ? cur
+          : [...cur, action.id]
+        : cur.filter((t) => t !== action.id);
+      return withPoolFlag(settings, { ...settings, wallhavenTags });
+    }
+    case 'sorting':
+      return withPoolFlag(settings, { ...settings, wallhavenSorting: action.value });
+    case 'setKey': {
+      const nextHas = action.value.trim().length > 0;
+      const next = {
+        ...settings,
+        wallhavenApiKey: action.value,
+        wallhavenPurity: nextHas
+          ? settings.wallhavenPurity
+          : purityAfterClearingKey(settings.wallhavenPurity),
+        wallhavenKeyOk: false,
+      };
+      return { settings: next, invalidatePool: filterQueryChanged(settings, next) };
+    }
+  }
 }

@@ -1,5 +1,7 @@
-/** 自制下拉：视口不够向下展开时改向上翻。 */
-
+/**
+ * 自制下拉要不要向上翻：下方够高则朝下；否则比谁剩余空间大。
+ * @param gap 锚点与菜单之间的空隙，默认 6。
+ */
 export function dropdownOpensUp(
   anchor: { top: number; bottom: number },
   menuHeight: number,

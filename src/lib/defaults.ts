@@ -1,7 +1,7 @@
 import type { AppItem } from './types';
 import { resolveAppIcon } from './appIcons';
 
-/** Author default Apps (ADR-0009). Icons filled at runtime via favicon helper. */
+/** 作者默认配置名单（ADR-0009）。图标在首次启动时按 hostname 填内置图。 */
 export const AUTHOR_DEFAULT_APPS: Omit<AppItem, 'id' | 'kind' | 'icon'>[] = [
   { name: '哔哩哔哩', url: 'https://www.bilibili.com' },
   { name: '抖音', url: 'https://www.douyin.com' },
@@ -64,15 +64,10 @@ export function buildAuthorDefaultApps(): AppItem[] {
   return AUTHOR_DEFAULT_APPS.map((a) => createAppFromUrl(a.url, a.name));
 }
 
-/** Fetch the best available icon into a data URL so the grid does not wait on the home screen. */
-export async function cacheIconAsDataUrl(siteUrl: string): Promise<string> {
-  return resolveAppIcon(siteUrl);
-}
-
 export async function buildAuthorDefaultAppsCached(): Promise<AppItem[]> {
   return Promise.all(
     AUTHOR_DEFAULT_APPS.map(async (a) => {
-      const icon = await cacheIconAsDataUrl(a.url);
+      const icon = await resolveAppIcon(a.url);
       return createAppFromUrl(a.url, a.name, icon);
     }),
   );

@@ -53,7 +53,12 @@
   }
 
   function onGridEvent(event: AppGridEvent) {
-    if (event.type === 'endDrag' || event.type === 'beginDrag' || event.type === 'cancelDrag') {
+    if (event.type === 'cancelDrag') {
+      shellDismissed = false;
+      onEvent(event);
+      return;
+    }
+    if (event.type === 'endDrag' || event.type === 'beginDrag') {
       onEvent(event);
       return;
     }

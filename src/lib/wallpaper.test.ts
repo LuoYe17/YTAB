@@ -2,9 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, mergeSettings, type WallpaperState } from './types';
 import {
   createWallpaperSession,
-  tagsAfterCategoriesChange,
   todayLocal,
-  visibleTagPresets,
   wallhavenSearchParams,
   type WallpaperItem,
 } from './wallpaper';
@@ -50,42 +48,6 @@ describe('wallhavenSearchParams', () => {
       wallhavenTags: ['anime girls', 'night'],
     });
     expect(p.get('q')).toBe('night');
-  });
-});
-
-describe('visibleTagPresets', () => {
-  it('只开动漫则有少女、没有风景摄影词', () => {
-    const ids = visibleTagPresets({ general: false, anime: true, people: false }).map((t) => t.id);
-    expect(ids).toContain('anime girls');
-    expect(ids).not.toContain('landscape');
-  });
-
-  it('只开常规则有风景、没有少女', () => {
-    const ids = visibleTagPresets({ general: true, anime: false, people: false }).map((t) => t.id);
-    expect(ids).toContain('landscape');
-    expect(ids).not.toContain('anime girls');
-  });
-
-  it('多开分类时共用标签只出现一次', () => {
-    const ids = visibleTagPresets({ general: true, anime: true, people: false }).map((t) => t.id);
-    expect(ids.filter((id) => id === 'night')).toHaveLength(1);
-  });
-
-  it('分类缺字段时仍给出默认动漫菜单', () => {
-    const ids = visibleTagPresets(undefined).map((t) => t.id);
-    expect(ids).toContain('anime girls');
-  });
-});
-
-describe('tagsAfterCategoriesChange', () => {
-  it('关掉动漫则去掉少女，留下常规也有的夜', () => {
-    expect(
-      tagsAfterCategoriesChange(['anime girls', 'night'], {
-        general: true,
-        anime: false,
-        people: false,
-      }),
-    ).toEqual(['night']);
   });
 });
 

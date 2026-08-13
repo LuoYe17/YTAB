@@ -3,7 +3,7 @@
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
   import type { GridItem } from '../lib/types';
   import type { AppGridEvent } from '../lib/appGrid';
-  import { bundledIconUrl, displayAppIcon, tileIconSrc } from '../lib/appIcons';
+  import { srcFor } from '../lib/appIcons';
   import {
     cellHit,
     hitEdgeRelative,
@@ -433,7 +433,10 @@
     }, 0);
 
     if (wasOutside) {
-      if (event.canceled || !sourceId) return;
+      if (event.canceled || !sourceId) {
+        if (event.canceled) onEvent({ type: 'cancelDrag' });
+        return;
+      }
       onEvent({ type: 'eject', appId: sourceId, insertAt: insertAtOnPage(dropX, dropY, sourceId) });
       return;
     }
@@ -524,7 +527,7 @@
             <div class="folder-preview">
               {#each Array.from({ length: 4 }, (_, i) => a.children[i] ?? null) as child}
                 {#if child}
-                  {@const src = tileIconSrc(child.url, child.icon) || bundledIconUrl(child.url)}
+                  {@const src = srcFor(child)}
                   {#if src}
                     <img src={src} alt="" />
                   {:else}
@@ -535,8 +538,8 @@
                 {/if}
               {/each}
             </div>
-          {:else if a.kind === 'app' && displayAppIcon(a.url, a.icon)}
-            <img src={displayAppIcon(a.url, a.icon)} alt="" />
+          {:else if a.kind === 'app' && srcFor(a)}
+            <img src={srcFor(a)} alt="" />
           {:else}
             <span class="ph">{a.name.slice(0, 1)}</span>
           {/if}

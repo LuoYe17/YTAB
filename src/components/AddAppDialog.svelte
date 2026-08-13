@@ -3,7 +3,7 @@
   import { cubicOut } from 'svelte/easing';
   import type { AppItem } from '../lib/types';
   import { createAppFromUrl, hostnameFallback, normalizeUrl } from '../lib/defaults';
-  import { displayAppIcon, resolveAppIcon } from '../lib/appIcons';
+  import { resolveAppIcon, srcFor } from '../lib/appIcons';
 
   let {
     initial = null,
@@ -29,7 +29,9 @@
   let fileEl = $state<HTMLInputElement | null>(null);
   let autofillJob: Promise<void> | null = null;
 
-  const preview = $derived(displayAppIcon(url, icon));
+  const preview = $derived(
+    srcFor({ id: initial?.id ?? '', kind: 'app', name, url, icon }),
+  );
   const glyph = $derived((name.trim() || hostnameFallback(url) || 'A').slice(0, 1));
 
   $effect(() => {

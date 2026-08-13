@@ -60,6 +60,23 @@ describe('apply', () => {
     expect(canceled.view.dragSnapshot).toBeNull();
   });
 
+  it('文件夹内换位后 Esc 连打开中的文件夹一起回滚', () => {
+    const a = app('a');
+    const b = app('b');
+    const f = folder('f', [a, b]);
+    const opened = apply(createAppGridView([[f]]), { type: 'openFolder', folderId: 'f' });
+    const began = apply(opened.view, { type: 'beginDrag', itemId: 'a' });
+    const moved = apply(began.view, { type: 'reorderFolder', order: ['b', 'a'] });
+    expect(moved.view.openFolder?.children.map((c) => c.id)).toEqual(['b', 'a']);
+    const canceled = apply(moved.view, { type: 'cancelDrag' });
+    expect(canceled.persist).toBe(false);
+    expect(canceled.view.openFolder?.children.map((c) => c.id)).toEqual(['a', 'b']);
+    const item = canceled.view.pages[0]![0]!;
+    expect(item.kind).toBe('folder');
+    if (item.kind !== 'folder') return;
+    expect(item.children.map((c) => c.id)).toEqual(['a', 'b']);
+  });
+
   it('文件夹内换位写入 pages 并 persist', () => {
     const a = app('a');
     const b = app('b');

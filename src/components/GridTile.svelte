@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createDraggable, createDroppable } from '@dnd-kit/svelte';
-  import { bundledIconUrl, displayAppIcon, tileIconSrc } from '../lib/appIcons';
-  import type { GridItem } from '../lib/types';
+  import { srcFor } from '../lib/appIcons';
+  import type { AppItem, GridItem } from '../lib/types';
 
   let {
     item,
@@ -35,17 +35,12 @@
     },
   });
 
-  function childThumb(child: { url: string; icon: string }): string {
-    return tileIconSrc(child.url, child.icon) || bundledIconUrl(child.url);
+  function childThumb(child: AppItem): string {
+    return srcFor(child);
   }
 
-  const iconSrc = $derived(item.kind === 'app' ? displayAppIcon(item.url, item.icon) : '');
-  const showIcon = $derived(
-    !!iconSrc &&
-      !iconSrc.startsWith('idb:') &&
-      !iconSrc.startsWith('/') &&
-      !iconSrc.startsWith('chrome:'),
-  );
+  const iconSrc = $derived(item.kind === 'app' ? srcFor(item) : '');
+  const showIcon = $derived(!!iconSrc);
   let imgFailed = $state(false);
   $effect(() => {
     void iconSrc;
@@ -90,9 +85,9 @@
         alt=""
         draggable="false"
         onerror={(e) => {
-          const fb = bundledIconUrl(item.url);
+          const fb = item.kind === 'app' ? srcFor({ ...item, icon: '' }) : '';
           const el = e.currentTarget as HTMLImageElement;
-          if (fb && el.dataset.fb !== '1') {
+          if (fb && fb !== iconSrc && el.dataset.fb !== '1') {
             el.dataset.fb = '1';
             el.src = fb;
           } else {

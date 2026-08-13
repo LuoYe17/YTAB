@@ -5,9 +5,8 @@
   import type { Settings, WallhavenSorting } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
   import { plainNotice } from '../lib/notice';
-  import { isTurningOffLast, purityAfterClearingKey, toggleCategory, togglePurity } from '../lib/settingsFilters';
+  import { applyFilter, visibleTagPresets, type FilterAction } from '../lib/settingsFilters';
   import { testWallhavenKey } from '../lib/wallhavenKey';
-  import { tagsAfterCategoriesChange, visibleTagPresets } from '../lib/wallpaper';
   import CapsuleSwitch from './CapsuleSwitch.svelte';
   import CustomScroll from './CustomScroll.svelte';
   import FilePickButton from './FilePickButton.svelte';
@@ -53,7 +52,7 @@
     highlight?: WallpaperFailFocus | null;
     origin?: { x: number; y: number };
     onClose: () => void;
-    onChange: (next: Settings) => void;
+    onChange: (next: Settings, invalidatePool?: boolean) => void;
     onExport: (opts: { includeIcons: boolean; includeApiKey: boolean }) => void | Promise<void>;
     onImport: (file: File) => void | Promise<void>;
     onResetAll: () => void;
@@ -127,36 +126,26 @@
     onChange({ ...settings, ...partial });
   }
 
+  function commitFilter(action: FilterAction) {
+    const result = applyFilter(settings, action);
+    if (result.notice) plainNotice('fail', result.notice);
+    onChange(result.settings, result.invalidatePool);
+  }
+
   function setPurity(key: 'sfw' | 'sketchy' | 'nsfw', on: boolean) {
-    if (isTurningOffLast(settings.wallhavenPurity, key, on)) {
-      plainNotice('fail', '纯度至少开一项');
-      return;
-    }
-    patch({ wallhavenPurity: togglePurity(settings.wallhavenPurity, key, on, hasKey) });
+    commitFilter({ type: 'purity', key, on });
   }
 
   function setCategory(key: 'general' | 'anime' | 'people', on: boolean) {
-    if (isTurningOffLast(settings.wallhavenCategories, key, on)) {
-      plainNotice('fail', '分类至少开一项');
-      return;
-    }
-    const wallhavenCategories = toggleCategory(settings.wallhavenCategories, key, on);
-    patch({
-      wallhavenCategories,
-      wallhavenTags: tagsAfterCategoriesChange(settings.wallhavenTags ?? [], wallhavenCategories),
-    });
+    commitFilter({ type: 'category', key, on });
   }
 
   function setTag(id: string, on: boolean) {
-    const cur = settings.wallhavenTags ?? [];
-    const next = on ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((t) => t !== id);
-    patch({ wallhavenTags: next });
+    commitFilter({ type: 'tag', id, on });
   }
 
   function onKeyInput(value: string) {
-    const nextHas = value.trim().length > 0;
-    const purity = !nextHas ? purityAfterClearingKey(settings.wallhavenPurity) : settings.wallhavenPurity;
-    patch({ wallhavenApiKey: value, wallhavenPurity: purity, wallhavenKeyOk: false });
+    commitFilter({ type: 'setKey', value });
   }
 
   async function testKey() {
@@ -484,7 +473,7 @@
                   value={settings.wallhavenSorting || 'toplist'}
                   options={SORTING_OPTIONS}
                   fill
-                  onChange={(v) => patch({ wallhavenSorting: v as WallhavenSorting })}
+                  onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}
                 />
               </div>
               <div class="block">

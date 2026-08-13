@@ -311,7 +311,7 @@
               <div class="block inline">
                 <div class="head">
                   <span id="lbl-open" class="title">打开方式</span>
-                  {@render helpMark('只作用于起始页上的 App，搜索和页脚链接不走这项。')}
+                  {@render helpMark('点 App 时用当前这一页打开，还是另开一个标签。搜索框和页脚链接不受影响。')}
                 </div>
                 <SegmentedControl
                   labelledBy="lbl-open"
@@ -325,8 +325,8 @@
               </div>
               <div class="block inline">
                 <div class="head">
-                  <span id="lbl-bing" class="title">Bing</span>
-                  {@render helpMark('国内是 cn.bing.com，国际是 www.bing.com。')}
+                  <span id="lbl-bing" class="title">搜索地区</span>
+                  {@render helpMark('搜索框用国内 Bing 还是国际 Bing。国内更贴中文结果。')}
                 </div>
                 <SegmentedControl
                   labelledBy="lbl-bing"
@@ -360,7 +360,7 @@
                     </span>
                   {/if}
                   <span class="title">Wallhaven 密钥</span>
-                  {@render helpMark('提高请求限额；开限制必须填写。')}
+                  {@render helpMark('选填。填了拉图更稳，想看「少儿不宜」内容必须先填。')}
                   <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
                 </div>
                 <div class="key-row">
@@ -415,8 +415,8 @@
               </div>
               <div class="block" class:glow={glow === 'filters'}>
                 <div class="head">
-                  <span class="title">纯度</span>
-                  {@render helpMark('至少开一项。没密钥时不能开限制。')}
+                  <span class="title">内容尺度</span>
+                  {@render helpMark('想看少儿不宜的图。至少留一项。没密钥不能开「少儿不宜」。')}
                 </div>
                 <div class="caps fill">
                   <CapsuleSwitch
@@ -432,7 +432,7 @@
                     onChange={(on) => setPurity('sketchy', on)}
                   />
                   <CapsuleSwitch
-                    label="限制"
+                    label="少儿不宜"
                     tile
                     on={settings.wallhavenPurity.nsfw}
                     disabled={!hasKey}
@@ -443,7 +443,7 @@
               <div class="block" class:glow={glow === 'filters'}>
                 <div class="head">
                   <span class="title">分类</span>
-                  {@render helpMark('至少开一项。')}
+                  {@render helpMark('壁纸属于哪一类。至少留一项。')}
                 </div>
                 <div class="caps fill">
                   <CapsuleSwitch
@@ -469,7 +469,7 @@
               <div class="block inline">
                 <div class="head">
                   <span id="wallpaper-sorting" class="title">排序</span>
-                  {@render helpMark('热门按近一个月。有标签时相关更准。')}
+                  {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签时，「相关」更准。')}
                 </div>
                 <SegmentedControl
                   labelledBy="wallpaper-sorting"
@@ -482,7 +482,7 @@
               <div class="block">
                 <div class="head">
                   <span class="title">标签</span>
-                  {@render helpMark('可选。跟着上面的分类换；多选一起搜；全关则不限。')}
+                  {@render helpMark('可选。跟着上面分类换。多选一起搜，全关就不限题材。')}
                 </div>
                 <div class="caps fill">
                   {#each tagPresets as tag (tag.id)}
@@ -503,7 +503,7 @@
               <div class="block inline">
                 <div class="head">
                   <span class="title">导出</span>
-                  {@render helpMark('导出为 .ytab。图标和密钥在下一步选。')}
+                  {@render helpMark('把 App、设置和壁纸存成一个文件，方便换机。图标和密钥下一步再选。')}
                 </div>
                 <button type="button" class="action" disabled={exportBusy} onclick={() => (sheet = 'export')}>
                   {exportBusy ? '导出中…' : '导出'}
@@ -512,14 +512,14 @@
               <div class="block inline">
                 <div class="head">
                   <span class="title">导入</span>
-                  {@render helpMark('从 .ytab 恢复，会整份替换当前数据。')}
+                  {@render helpMark('用导出的文件恢复。会整份换成文件里的内容，现在的会被覆盖。')}
                 </div>
                 <FilePickButton label="选择文件" accept=".ytab,application/zip" onFile={onImportPicked} />
               </div>
               <div class="block inline">
                 <div class="head">
                   <span class="title">重置</span>
-                  {@render helpMark('清除全部本地数据并回到首次启动，不可撤销。')}
+                  {@render helpMark('清掉本机全部数据，回到第一次打开时的选择。做不到撤销。')}
                 </div>
                 <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置所有数据</button>
               </div>

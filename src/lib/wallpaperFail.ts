@@ -20,7 +20,7 @@ const HINTS: Record<WallpaperFailReason, WallpaperFailHint> = {
   },
   empty: {
     before: '一张合适的都没找到 (´;ω;`) ',
-    link: '去设置 → 壁纸把纯度或分类放宽一点',
+    link: '去设置 → 壁纸把内容尺度或分类放宽一点',
     after: '吧',
     focus: 'filters',
   },

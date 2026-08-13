@@ -19,13 +19,13 @@ describe('togglePurity', () => {
     });
   });
 
-  it('没密钥不能开限制', () => {
+  it('没密钥不能开「少儿不宜」', () => {
     expect(togglePurity({ sfw: true, sketchy: false, nsfw: false }, 'nsfw', true, false).nsfw).toBe(
       false,
     );
   });
 
-  it('有密钥可以开限制', () => {
+  it('有密钥可以开「少儿不宜」', () => {
     expect(togglePurity({ sfw: true, sketchy: false, nsfw: false }, 'nsfw', true, true).nsfw).toBe(
       true,
     );
@@ -69,7 +69,7 @@ describe('toggleCategory', () => {
 });
 
 describe('purityAfterClearingKey', () => {
-  it('清空密钥则把限制关掉', () => {
+  it('清空密钥则把「少儿不宜」关掉', () => {
     expect(purityAfterClearingKey({ sfw: true, sketchy: true, nsfw: true })).toEqual({
       sfw: true,
       sketchy: true,
@@ -77,7 +77,7 @@ describe('purityAfterClearingKey', () => {
     });
   });
 
-  it('只开着限制时清空密钥则改开安全', () => {
+  it('只开着「少儿不宜」时清空密钥则改开安全', () => {
     expect(purityAfterClearingKey({ sfw: false, sketchy: false, nsfw: true })).toEqual({
       sfw: true,
       sketchy: false,
@@ -130,7 +130,7 @@ describe('applyFilter', () => {
     };
     const result = applyFilter(settings, { type: 'purity', key: 'sfw', on: false });
     expect(result.settings).toBe(settings);
-    expect(result.notice).toBe('纯度至少开一项');
+    expect(result.notice).toBe('内容尺度至少开一项');
     expect(result.invalidatePool).toBe(false);
   });
 
@@ -145,7 +145,7 @@ describe('applyFilter', () => {
     expect(result.invalidatePool).toBe(false);
   });
 
-  it('没密钥开限制无效', () => {
+  it('没密钥开少儿不宜无效', () => {
     const settings = { ...DEFAULT_SETTINGS, wallhavenApiKey: '' };
     const result = applyFilter(settings, { type: 'purity', key: 'nsfw', on: true });
     expect(result.settings).toBe(settings);
@@ -177,7 +177,7 @@ describe('applyFilter', () => {
     expect(result.invalidatePool).toBe(true);
   });
 
-  it('清空密钥若因此关了限制则清池', () => {
+  it('清空密钥若因此关了「少儿不宜」则清池', () => {
     const settings = {
       ...DEFAULT_SETTINGS,
       wallhavenApiKey: 'abc',

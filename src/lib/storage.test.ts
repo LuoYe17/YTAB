@@ -30,7 +30,7 @@ function memPersist(seed: { meta?: YtabState; legacy?: string } = {}) {
   const calls: string[] = [];
   const batches: { entries: Map<string, string>; deleteKeys: string[] }[] = [];
   const kvMap = new Map<string, string>();
-  const fail = { kvSet: false, writeBatch: false };
+  const fail = { kvSet: false, writeBatch: false, kvRead: false };
   let metaValue: YtabState | null = seed.meta ? structuredClone(seed.meta) : null;
   let legacy = seed.legacy ?? '';
 
@@ -48,8 +48,14 @@ function memPersist(seed: { meta?: YtabState; legacy?: string } = {}) {
   };
 
   const kv: KvStore = {
-    get: async (key) => kvMap.get(key) ?? '',
-    keys: async () => [...kvMap.keys()],
+    get: async (key) => {
+      if (fail.kvRead) throw new Error('kv read down');
+      return kvMap.get(key) ?? '';
+    },
+    keys: async () => {
+      if (fail.kvRead) throw new Error('kv read down');
+      return [...kvMap.keys()];
+    },
     set: async (key, value) => {
       calls.push('kv.set');
       if (fail.kvSet) throw new Error('kv set down');
@@ -175,6 +181,21 @@ describe('读回', () => {
 
     const loaded = await p.load();
     expect(loaded.pages[0]![0]).toMatchObject({ icon: faviconUrlFor(orphan.url) });
+  });
+
+  it('像素读不出来时退回 favicon，但不许把引用写回盘', async () => {
+    const p = memPersist();
+    await p.save(stateOf([app('a', DATA_A)], WALLPAPER));
+    const before = p.storedMeta();
+    p.calls.length = 0;
+    p.fail.kvRead = true;
+
+    const loaded = await p.load();
+    expect(loaded.pages[0]![0]).toMatchObject({ icon: faviconUrlFor('https://example.com/a') });
+    // 一旦回写，meta 里的 idb:a 就会变成 favicon，而像素其实还躺在 kv 里
+    expect(p.writes()).not.toContain('meta.set');
+    expect(p.storedMeta()).toEqual(before);
+    expect(p.kvMap.get(iconIdbKey('a'))).toBe(DATA_A);
   });
 
   it('内置作者图标升级会顺手落盘', async () => {

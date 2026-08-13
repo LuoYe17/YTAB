@@ -166,10 +166,12 @@ export function createPersist({ meta, kv }: { meta: MetaStore; kv: KvStore }): P
     }
 
     let iconBlobs = new Map<string, string>();
+    let pixelsReadable = true;
     try {
       iconBlobs = await readIconBlobs();
     } catch (err) {
       console.error('[ytab] icon read failed', err);
+      pixelsReadable = false;
     }
 
     const hydrated = { ...state, wallpaper: { ...state.wallpaper, imageUrl } };
@@ -179,7 +181,12 @@ export function createPersist({ meta, kv }: { meta: MetaStore; kv: KvStore }): P
     // chrome.storage 里若还嵌着 data: 图标，必须走 save 写入链，先落 IDB 再发 meta。
     const needsIconMigrate = pack(state).blobs.size > 0;
     const needsBundledUpgrade = loaded !== afterHydrate;
-    if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade) {
+    // 像素读不出来时 hydrate 已经退成 favicon；这时候落盘会把 idb: 引用永久抹掉，
+    // 而像素其实还在盘上。宁可这次不写，等下次读得出来再说。
+    if (
+      pixelsReadable &&
+      (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade)
+    ) {
       await save(loaded);
     }
 
@@ -274,7 +281,7 @@ function idbKvStore(): KvStore {
   };
 }
 
-/** 生产实例懒建：import 本模块不该碰扩展运行时，否则测试与非扩展页一进来就炸。 */
+/** 懒建生产实例：`defineItem` 会摸扩展运行时，不该在 import 本模块时就发生。 */
 let production: Persist | null = null;
 
 function persist(): Persist {
@@ -282,10 +289,18 @@ function persist(): Persist {
   return production;
 }
 
+/**
+ * 读出整份状态：meta 补默认设置，像素从 IndexedDB 填回，顺带迁移旧格式。
+ * 像素读失败时图标退回站点 favicon，且**不落盘**，免得把还在盘上的像素引用抹掉。
+ */
 export function loadState(): Promise<YtabState> {
   return persist().load();
 }
 
+/**
+ * 落盘整份状态。连续调用会合并，只写最后一份。
+ * 壁纸像素写失败会 reject（调用方要让用户知道），图标像素写失败则不提交 meta。
+ */
 export function saveState(state: YtabState): Promise<void> {
   return persist().save(state);
 }

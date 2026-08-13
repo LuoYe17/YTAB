@@ -70,8 +70,6 @@ export function wallhavenSearchParams(settings: Settings): URLSearchParams {
   const q = (settings.wallhavenTags ?? []).filter((id) => allowed.has(id)).join(' ');
   if (q) params.set('q', q);
   if (sorting === 'toplist') params.set('topRange', '1M');
-  const key = settings.wallhavenApiKey.trim();
-  if (key) params.set('apikey', key);
   return params;
 }
 
@@ -129,7 +127,11 @@ export async function toDisplayDataUrl(source: Blob | string): Promise<string> {
 }
 
 async function searchHits(settings: Settings): Promise<WallhavenSearchHit[]> {
-  const res = await fetch(`https://wallhaven.cc/api/v1/search?${wallhavenSearchParams(settings)}`);
+  // 密钥走请求头，避免进查询串被代理/日志记下。
+  const key = (settings.wallhavenApiKey ?? '').trim();
+  const res = await fetch(`https://wallhaven.cc/api/v1/search?${wallhavenSearchParams(settings)}`, {
+    headers: key ? { 'X-API-Key': key } : undefined,
+  });
   if (!res.ok) throw new Error(`wallhaven ${res.status}`);
   const data = (await res.json()) as { data?: WallhavenSearchHit[] };
   return (data.data ?? []).filter((h) => {

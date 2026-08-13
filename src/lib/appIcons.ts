@@ -112,10 +112,9 @@ async function urlToDataUrl(url: string): Promise<string> {
   }
 }
 
-/** 空 / 裂图引用 / Google 小图 / 旧内置 SVG 才换成内置；用户上传的 png/jpg/webp 不动。 */
+/** 只换空 / idb: / 相对 / chrome: / Google s2。用户上传的 data:（含 SVG）不能换，否则解包会盖掉。 */
 function shouldApplyBundledIcon(icon: string): boolean {
   if (isBrokenIconRef(icon)) return true;
-  if (icon.startsWith('data:image/svg+xml')) return true;
   try {
     const u = new URL(icon);
     return u.hostname === 'www.google.com' && u.pathname.includes('/s2/favicons');
@@ -124,7 +123,7 @@ function shouldApplyBundledIcon(icon: string): boolean {
   }
 }
 
-/** 把内置表里的图填进网格；只改 hostname 命中、且仍是自动抓取 / 旧内置 SVG 的 App。无改动则原引用，方便启动时决定要不要落盘。 */
+/** 把内置表里的图填进网格；只改 hostname 命中、且仍是空/裂图/Google 小图的 App。无改动则原引用，方便启动时决定要不要落盘。 */
 export function applyBundledIcons(state: YtabState, dataUrls: Map<string, string>): YtabState {
   let changed = false;
   const mapApp = (app: AppItem): AppItem => {

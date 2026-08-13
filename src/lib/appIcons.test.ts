@@ -100,13 +100,15 @@ describe('bundled App icons', () => {
     expect(f.children[0]?.icon).toBe('data:gm');
   });
 
-  it('applyBundledIcons：内置站的旧 SVG data URL 可换代', () => {
+  it('applyBundledIcons：用户上传的 SVG 即使 hostname 命中也不换', () => {
+    const custom = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"></svg>';
     const state = {
       ...createEmptyState(),
-      pages: [[app('cf', 'https://dash.cloudflare.com', 'data:image/svg+xml,<svg></svg>')]],
+      pages: [[app('gh', 'https://github.com', custom)]],
     };
-    const next = applyBundledIcons(state, new Map([['dash.cloudflare.com', 'data:cf-new']]));
-    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe('data:cf-new');
+    const next = applyBundledIcons(state, new Map([['github.com', 'data:gh-bundled']]));
+    expect(next).toBe(state);
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(custom);
   });
 
   it('applyBundledIcons：已是当前内置则原引用', () => {
@@ -150,6 +152,16 @@ describe('bundled App icons', () => {
     expect(next.pages[0]![2]?.kind === 'app' && next.pages[0]![2].icon).toBe(
       faviconUrlFor('https://example.com'),
     );
+  });
+
+  it('unpack：内置站上的用户 SVG 解包后仍在', () => {
+    const customSvg = 'data:image/svg+xml;charset=utf-8,%3Csvg%3E%3C/svg%3E';
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('gh', 'https://github.com', `${META_ICON_PREFIX}gh`)]],
+    };
+    const next = unpack(state, new Map([['gh', customSvg]]));
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(customSvg);
   });
 
   it('内置 SVG 不含 XML 非法控制符', () => {

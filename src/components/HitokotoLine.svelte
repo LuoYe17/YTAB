@@ -22,8 +22,8 @@
   let sx = $state(1);
   let ringOn = $state(false);
 
+  // 只跟 props 的 text/from；busy 翻回 false 时父级可能还没写回，不能用旧句盖掉刚刷到的。
   $effect(() => {
-    if (busy) return;
     shownText = text;
     shownFrom = from;
   });

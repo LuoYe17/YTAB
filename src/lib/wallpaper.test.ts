@@ -31,6 +31,12 @@ describe('wallhavenSearchParams', () => {
     expect(p.get('categories')).toBe('010');
     expect(p.get('atleast')).toBe('1920x1080');
     expect(p.get('ratios')).toBe('16x9,16x10');
+    expect(p.get('apikey')).toBeNull();
+  });
+
+  it('密钥不进查询串', () => {
+    const p = wallhavenSearchParams({ ...DEFAULT_SETTINGS, wallhavenApiKey: 'secret-key' });
+    expect(p.get('apikey')).toBeNull();
   });
 
   it('选了标签则按空格写入 q', () => {

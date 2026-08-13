@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { AppItem } from '../lib/types';
@@ -27,7 +28,9 @@
   let fileError = $state('');
   let imgFailed = $state(false);
   let fileEl = $state<HTMLInputElement | null>(null);
+  let sheetEl = $state<HTMLFormElement | null>(null);
   let autofillJob: Promise<void> | null = null;
+  let autofillGen = 0;
 
   const preview = $derived(
     srcFor({ id: initial?.id ?? '', kind: 'app', name, url, icon }),
@@ -39,14 +42,44 @@
     imgFailed = false;
   });
 
+  function sheetTabbables(): HTMLElement[] {
+    if (!sheetEl) return [];
+    return [...sheetEl.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]):not(.sr)')];
+  }
+
   $effect(() => {
+    // aria-modal 不会锁 Tab；打开落到第一个可改的框，关掉把焦点还回去。
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopImmediatePropagation();
-      onCancel();
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        onCancel();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = sheetTabbables();
+      if (!list.length) return;
+      const first = list[0]!;
+      const last = list[list.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !sheetEl?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !sheetEl?.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    void tick().then(() => {
+      sheetEl?.querySelector<HTMLElement>('input:not(.sr)')?.focus();
+    });
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      if (opener && document.contains(opener)) opener.focus();
+    };
   });
 
   async function autofill() {
@@ -54,6 +87,9 @@
     url = normalized;
     if (!name.trim()) name = hostnameFallback(normalized);
     fetching = true;
+    const jobUrl = normalized;
+    const jobId = ++autofillGen;
+    const stillCurrent = () => jobId === autofillGen && url === jobUrl;
     const job = (async () => {
       const signal = AbortSignal.timeout(8000);
       try {
@@ -64,12 +100,15 @@
               signal.addEventListener('abort', () => r(''), { once: true });
             }),
           ]);
+          if (!stillCurrent()) return;
           if (!icon.trim()) icon = resolved;
         }
         // 标题抓取常被 CORS 挡；图标不依赖这次 fetch
         const res = await fetch(normalized, { method: 'GET', signal });
+        if (!stillCurrent()) return;
         if (res.ok) {
           const html = await res.text();
+          if (!stillCurrent()) return;
           const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
           if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
         }
@@ -81,8 +120,11 @@
     try {
       await job;
     } finally {
-      fetching = false;
-      if (autofillJob === job) autofillJob = null;
+      // 旧任务回来不能改当前框，也不能把仍在跑的 fetching 清掉。
+      if (jobId === autofillGen) {
+        fetching = false;
+        if (autofillJob === job) autofillJob = null;
+      }
     }
   }
 
@@ -133,7 +175,12 @@
 
 <div class="overlay" role="dialog" aria-modal="true" aria-labelledby="app-dlg-title" transition:fade={{ duration: 160 }}>
   <button type="button" class="backdrop" aria-label="关闭" onclick={onCancel}></button>
-  <form class="sheet ios-sheet" onsubmit={submit} transition:scale={{ duration: 200, start: 0.96, easing: cubicOut }}>
+  <form
+    bind:this={sheetEl}
+    class="sheet ios-sheet"
+    onsubmit={submit}
+    transition:scale={{ duration: 200, start: 0.96, easing: cubicOut }}
+  >
     <header>
       <button type="button" class="icon-btn ios-tile" onclick={() => fileEl?.click()} aria-label="更换图标">
         {#if preview && !imgFailed}

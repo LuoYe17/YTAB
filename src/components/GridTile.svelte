@@ -42,9 +42,13 @@
   const iconSrc = $derived(item.kind === 'app' ? srcFor(item) : '');
   const showIcon = $derived(!!iconSrc);
   let imgFailed = $state(false);
+  /** 远程裂图后再试站点图；都失败则走字号，与顶层 App 同一条回退链。 */
+  let childFailed = $state(new Set<string>());
   $effect(() => {
     void iconSrc;
+    if (item.kind === 'folder') void item.children;
     imgFailed = false;
+    childFailed = new Set();
   });
 </script>
 
@@ -65,8 +69,22 @@
         {#each Array.from({ length: 4 }, (_, i) => item.children[i] ?? null) as child}
           {#if child}
             {@const src = childThumb(child)}
-            {#if src}
-              <img src={src} alt="" draggable="false" />
+            {#if src && !childFailed.has(child.id)}
+              <img
+                src={src}
+                alt=""
+                draggable="false"
+                onerror={(e) => {
+                  const fb = srcFor({ ...child, icon: '' });
+                  const el = e.currentTarget as HTMLImageElement;
+                  if (fb && fb !== src && el.dataset.fb !== '1') {
+                    el.dataset.fb = '1';
+                    el.src = fb;
+                  } else {
+                    childFailed = new Set([...childFailed, child.id]);
+                  }
+                }}
+              />
             {:else}
               <span class="ph">{child.name.slice(0, 1)}</span>
             {/if}

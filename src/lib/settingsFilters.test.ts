@@ -198,4 +198,19 @@ describe('applyFilter', () => {
     expect(result.settings.wallhavenKeyOk).toBe(false);
     expect(result.invalidatePool).toBe(false);
   });
+
+  it('同一标签再开不重复', () => {
+    const settings = { ...DEFAULT_SETTINGS, wallhavenTags: ['night'] };
+    const result = applyFilter(settings, { type: 'tag', id: 'night', on: true });
+    expect(result.settings).toBe(settings);
+    expect(result.settings.wallhavenTags).toEqual(['night']);
+    expect(result.invalidatePool).toBe(false);
+  });
+
+  it('关掉标签则清池', () => {
+    const settings = { ...DEFAULT_SETTINGS, wallhavenTags: ['night'] };
+    const result = applyFilter(settings, { type: 'tag', id: 'night', on: false });
+    expect(result.settings.wallhavenTags).toEqual([]);
+    expect(result.invalidatePool).toBe(true);
+  });
 });

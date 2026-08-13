@@ -53,7 +53,6 @@
       disabled={phase !== 'idle'}
       onclick={refresh}
       aria-label="换一张"
-      aria-live="polite"
     >
     <span class="idle" class:hide={phase !== 'idle'} aria-hidden={phase !== 'idle'}>
       <svg viewBox="0 0 24 24" width="22" height="22">

@@ -156,7 +156,10 @@
     const { view, persist: write } = apply(grid, event);
     grid = view;
     if (write) {
-      void persist((prev) => ({ ...prev, pages: view.pages }));
+      void persist((prev) => ({ ...prev, pages: view.pages })).catch(() => {
+        // 网格已上屏；落盘失败必须说出来，否则拖完刷新会丢
+        plainNotice('fail', '保存失败了');
+      });
     }
   }
 

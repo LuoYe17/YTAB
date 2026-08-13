@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { Settings, WallhavenSorting } from '../lib/types';
@@ -99,16 +99,17 @@
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
       if (sheet) sheet = null;
       else onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   });
 
   $effect(() => {
     void tab;
-    const slide = pillSlide;
+    const slide = untrack(() => pillSlide);
     void tick().then(() => {
       const btn = navEl?.querySelector<HTMLElement>(`[data-tab="${tab}"]`);
       if (!btn) return;
@@ -152,8 +153,10 @@
     if (testBusy || !hasKey) return;
     testBusy = true;
     keyFlash = null;
-    const result = await testWallhavenKey(settings.wallhavenApiKey);
+    const key = settings.wallhavenApiKey;
+    const result = await testWallhavenKey(key);
     testBusy = false;
+    if (settings.wallhavenApiKey !== key) return;
     if (result === 'ok') {
       patch({ wallhavenKeyOk: true });
       keyFlash = 'ok';

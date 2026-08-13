@@ -51,6 +51,17 @@
   function pick(v: string) {
     onChange(v);
     open = false;
+    btnEl?.focus();
+  }
+
+  function optionButtons(): HTMLButtonElement[] {
+    return [...(menuEl?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [])];
+  }
+
+  function focusOption(i: number) {
+    const opts = optionButtons();
+    if (!opts.length) return;
+    opts[Math.max(0, Math.min(i, opts.length - 1))]?.focus();
   }
 
   function onDoc(e: PointerEvent) {
@@ -62,11 +73,36 @@
   $effect(() => {
     if (!open) return;
     void menuEl;
-    void tick().then(() => place());
+    void tick().then(() => {
+      place();
+      const opts = optionButtons();
+      const i = opts.findIndex((o) => o.getAttribute('aria-selected') === 'true');
+      (i >= 0 ? opts[i] : opts[0])?.focus();
+    });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopImmediatePropagation();
-      open = false;
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        open = false;
+        btnEl?.focus();
+        return;
+      }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+      const opts = optionButtons();
+      if (!opts.length) return;
+      e.preventDefault();
+      if (e.key === 'Home') {
+        focusOption(0);
+        return;
+      }
+      if (e.key === 'End') {
+        focusOption(opts.length - 1);
+        return;
+      }
+      const i = opts.indexOf(document.activeElement as HTMLButtonElement);
+      const dir = e.key === 'ArrowDown' ? 1 : -1;
+      const next = i < 0 ? (dir > 0 ? 0 : opts.length - 1) : (i + dir + opts.length) % opts.length;
+      focusOption(next);
     };
     const onWin = () => place();
     document.addEventListener('pointerdown', onDoc, true);

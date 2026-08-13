@@ -138,11 +138,19 @@ export type FilterResult = {
   invalidatePool: boolean;
 };
 
-/** 与起始页原先 JSON.stringify 比的是同一组会改搜索条件的字段。 */
+/** 纯度/分类按字段比，避免键序让 JSON.stringify 误判；排序缺省当热门，标签仍按序列化比。 */
 function filterQueryChanged(prev: Settings, next: Settings): boolean {
+  const p = prev.wallhavenPurity;
+  const n = next.wallhavenPurity;
+  const pc = prev.wallhavenCategories;
+  const nc = next.wallhavenCategories;
   return (
-    JSON.stringify(prev.wallhavenPurity) !== JSON.stringify(next.wallhavenPurity) ||
-    JSON.stringify(prev.wallhavenCategories) !== JSON.stringify(next.wallhavenCategories) ||
+    p.sfw !== n.sfw ||
+    p.sketchy !== n.sketchy ||
+    p.nsfw !== n.nsfw ||
+    pc.general !== nc.general ||
+    pc.anime !== nc.anime ||
+    pc.people !== nc.people ||
     (prev.wallhavenSorting || 'toplist') !== (next.wallhavenSorting || 'toplist') ||
     JSON.stringify(prev.wallhavenTags ?? []) !== JSON.stringify(next.wallhavenTags ?? [])
   );
@@ -171,7 +179,7 @@ export function applyFilter(settings: Settings, action: FilterAction): FilterRes
         settings.wallhavenPurity,
         action.key,
         action.on,
-        settings.wallhavenApiKey.trim().length > 0,
+        (settings.wallhavenApiKey ?? '').trim().length > 0,
       );
       return withPoolFlag(settings, { ...settings, wallhavenPurity });
     }

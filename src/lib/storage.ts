@@ -1,9 +1,9 @@
 /** 持久化：chrome.storage 只放小 meta；壁纸与 App 图标像素在 IndexedDB。 */
 
 import { storage } from 'wxt/utils/storage';
-import { pack, unpack } from './appIcons';
+import { applyBundledIcons, bundledIconDataUrls, pack } from './appIcons';
 import { createEmptyState, mergeSettings, type YtabState } from './types';
-import { IDB_ICON_PREFIX, collectAppIds, iconIdbKey, staleIconKeys } from './iconPersist';
+import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, staleIconKeys } from './iconPersist';
 
 const META_KEY = 'local:ytab:v1' as const;
 /** Legacy key — read once to migrate, then clear. */
@@ -148,7 +148,8 @@ export function persistPlan(state: YtabState): PersistStep[] {
   return steps;
 }
 
-// 只执行 plan。壁纸失败可继续；有新图标像素却写失败则不能发 meta（否则 idb: 成永久空白）。
+// 只执行 plan。壁纸失败必须整单中止：meta 里 fetchedOn/wallhavenId 不能在 imageUrl 仍空时提交。
+// 有新图标像素却写失败则不能发 meta（否则 idb: 成永久空白）。
 async function writeNow(state: YtabState): Promise<void> {
   const blobs = new Map<string, string>();
   for (const step of persistPlan(state)) {
@@ -158,6 +159,7 @@ async function writeNow(state: YtabState): Promise<void> {
           await writeWallpaperImage(step.imageUrl);
         } catch (err) {
           console.error('[ytab] wallpaper image persist failed', err);
+          throw err;
         }
         break;
       case 'icon':
@@ -206,10 +208,12 @@ export async function loadState(): Promise<YtabState> {
   }
 
   const hydrated = { ...state, wallpaper: { ...state.wallpaper, imageUrl } };
-  const loaded = unpack(hydrated, iconBlobs);
+  // hydrate / unpack 每次都是新对象；只能拿 applyBundledIcons 的「有改才换引用」判断要不要落盘。
+  const afterHydrate = hydrateIconBlobs(hydrated, iconBlobs);
+  const loaded = applyBundledIcons(afterHydrate, await bundledIconDataUrls());
   // chrome.storage 里若还嵌着 data: 图标，必须走 saveState 写入链，先落 IDB 再发 meta。
   const needsIconMigrate = pack(state).blobs.size > 0;
-  const needsBundledUpgrade = loaded !== hydrated;
+  const needsBundledUpgrade = loaded !== afterHydrate;
   if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade) {
     await saveState(loaded);
   }
@@ -217,6 +221,10 @@ export async function loadState(): Promise<YtabState> {
   return loaded;
 }
 
+/**
+ * 排队写入。`writeNow` 抛错时本 Promise reject（调用方才能提示失败）；
+ * catch 只修 writeChain，避免一次失败把后续 save 全部卡住。
+ */
 export async function saveState(state: YtabState): Promise<void> {
   latest = state;
   const run = writeChain.then(async () => {

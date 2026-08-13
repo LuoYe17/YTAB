@@ -18,6 +18,7 @@
     items,
     enableMerge = true,
     compact = false,
+    scope = 'page',
     pageIndex = 0,
     pageCount = 1,
     onActivate,
@@ -31,6 +32,8 @@
     /** false = 仅换位（文件夹内部） */
     enableMerge?: boolean;
     compact?: boolean;
+    /** 换位事件走 scope，不跟 compact：compact 只改格子尺寸。 */
+    scope?: 'page' | 'folder';
     pageIndex?: number;
     pageCount?: number;
     onActivate: (item: GridItem) => void;
@@ -135,7 +138,7 @@
     if (!moved) return false;
     next.splice(to, 0, moved);
     const order = next.map((i) => i.id);
-    onEvent(compact ? { type: 'reorderFolder', order } : { type: 'reorderPage', order });
+    onEvent(scope === 'folder' ? { type: 'reorderFolder', order } : { type: 'reorderPage', order });
     return true;
   }
 
@@ -433,8 +436,9 @@
     }, 0);
 
     if (wasOutside) {
+      // 空 sourceId 无法 eject，必须 cancel 才能清掉 beginDrag 留下的 dragSnapshot。
       if (event.canceled || !sourceId) {
-        if (event.canceled) onEvent({ type: 'cancelDrag' });
+        onEvent({ type: 'cancelDrag' });
         return;
       }
       onEvent({ type: 'eject', appId: sourceId, insertAt: insertAtOnPage(dropX, dropY, sourceId) });
@@ -501,7 +505,7 @@
     bind:this={gridEl}
     class="grid"
     class:compact
-    data-ytab-grid={compact ? 'folder' : 'page'}
+    data-ytab-grid={scope}
     role="presentation"
     oncontextmenu={onContextMenu}
   >

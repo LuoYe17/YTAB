@@ -17,13 +17,20 @@ export function applyImportedState(
   displayUrl: string;
 } {
   const endFirstRun = opts?.endFirstRun ?? true;
+  const imageUrl = typeof raw.wallpaper?.imageUrl === 'string' ? raw.wallpaper.imageUrl : '';
+  const fetchedOn = typeof raw.wallpaper?.fetchedOn === 'string' ? raw.wallpaper.fetchedOn : '';
   return {
     state: {
       ...raw,
       settings: mergeSettings(raw.settings),
       onboardingDone: endFirstRun ? true : raw.onboardingDone,
+      wallpaper: {
+        imageUrl,
+        fetchedOn,
+        wallhavenId: raw.wallpaper?.wallhavenId,
+      },
     },
     invalidatePool: true,
-    displayUrl: raw.wallpaper.imageUrl ?? '',
+    displayUrl: imageUrl,
   };
 }

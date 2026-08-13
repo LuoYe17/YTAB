@@ -103,16 +103,30 @@ const SORTING: WallhavenSorting[] = [
   'toplist',
 ];
 
-/** 旧存储缺字段时补上当前默认，已有的分类/纯度原样保留。 */
+function realBool(v: unknown, fallback: boolean): boolean {
+  return typeof v === 'boolean' ? v : fallback;
+}
+
+/** 旧存储缺字段时补上当前默认。嵌套布尔只认真正的 boolean，导入脏值不能 Boolean("false") 变 true。 */
 export function mergeSettings(raw: Partial<Settings> | null | undefined): Settings {
   const s = raw ?? {};
+  const wallhavenApiKey = typeof s.wallhavenApiKey === 'string' ? s.wallhavenApiKey : '';
   return {
     openTarget: s.openTarget === 'new' ? 'new' : 'current',
     bingEndpoint: s.bingEndpoint === 'www' ? 'www' : 'cn',
-    wallhavenApiKey: typeof s.wallhavenApiKey === 'string' ? s.wallhavenApiKey : '',
-    wallhavenKeyOk: Boolean(s.wallhavenKeyOk),
-    wallhavenPurity: { ...DEFAULT_SETTINGS.wallhavenPurity, ...s.wallhavenPurity },
-    wallhavenCategories: { ...DEFAULT_SETTINGS.wallhavenCategories, ...s.wallhavenCategories },
+    wallhavenApiKey,
+    // 测通标记不能单独成立：没密钥或脏 true 都会在下次打开设置时画出假勾。
+    wallhavenKeyOk: s.wallhavenKeyOk === true && wallhavenApiKey !== '',
+    wallhavenPurity: {
+      sfw: realBool(s.wallhavenPurity?.sfw, DEFAULT_SETTINGS.wallhavenPurity.sfw),
+      sketchy: realBool(s.wallhavenPurity?.sketchy, DEFAULT_SETTINGS.wallhavenPurity.sketchy),
+      nsfw: realBool(s.wallhavenPurity?.nsfw, DEFAULT_SETTINGS.wallhavenPurity.nsfw),
+    },
+    wallhavenCategories: {
+      general: realBool(s.wallhavenCategories?.general, DEFAULT_SETTINGS.wallhavenCategories.general),
+      anime: realBool(s.wallhavenCategories?.anime, DEFAULT_SETTINGS.wallhavenCategories.anime),
+      people: realBool(s.wallhavenCategories?.people, DEFAULT_SETTINGS.wallhavenCategories.people),
+    },
     wallhavenSorting: SORTING.includes(s.wallhavenSorting as WallhavenSorting)
       ? (s.wallhavenSorting as WallhavenSorting)
       : DEFAULT_SETTINGS.wallhavenSorting,

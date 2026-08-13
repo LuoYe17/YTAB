@@ -1,14 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { META_ICON_PREFIX } from './iconPersist';
-import { persistPlan } from './storage';
+import { persistPlan, saveState } from './storage';
 import { createEmptyState, type AppItem, type FolderItem } from './types';
+
+const { setMetaValue } = vi.hoisted(() => ({
+  setMetaValue: vi.fn(async () => {}),
+}));
 
 // persistPlan 与 chrome.storage 同模块；defineItem 会摸 runtime，纯顺序测试不需要。
 vi.mock('wxt/utils/storage', () => ({
   storage: {
     defineItem: () => ({
       getValue: async () => null,
-      setValue: async () => {},
+      setValue: setMetaValue,
     }),
   },
 }));
@@ -64,5 +68,26 @@ describe('persistPlan', () => {
     if (metaStep?.kind !== 'meta') return;
     expect(metaStep.meta.pages[0]![0]).toMatchObject({ id: 'a', icon: http });
     expect(metaStep.meta.wallpaper.imageUrl).toBe('');
+  });
+});
+
+describe('saveState', () => {
+  it('壁纸写入失败则整单中止，不提交 fetchedOn/wallhavenId', async () => {
+    setMetaValue.mockClear();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('indexedDB', {
+      open: () => {
+        throw new Error('idb down');
+      },
+    });
+    await expect(
+      saveState({
+        ...createEmptyState(),
+        wallpaper: { imageUrl: 'data:image/jpeg;base64,wp', fetchedOn: '2026-01-01', wallhavenId: 'w' },
+      }),
+    ).rejects.toThrow();
+    expect(setMetaValue).not.toHaveBeenCalled();
+    err.mockRestore();
+    vi.unstubAllGlobals();
   });
 });

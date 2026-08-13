@@ -208,6 +208,9 @@ function pageFlipDuringDrag(view: AppGridView, toPage: number): AppGridView {
   if (toPage < 0 || toPage >= view.pages.length || toPage === fromPage) return view;
   const item = (view.pages[fromPage] ?? []).find((i) => i.id === id);
   if (!item) return view;
+  const dest = view.pages[toPage] ?? [];
+  // 目标页已满则拒绝翻页，否则会超过每页 19 格。
+  if (dest.filter((x) => x.id !== id).length >= PAGE_CAPACITY) return view;
   const pages = view.pages.map((page, i) => {
     if (i === fromPage) return page.filter((x) => x.id !== id);
     if (i === toPage) return [...page.filter((x) => x.id !== id), item];

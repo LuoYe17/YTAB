@@ -101,6 +101,7 @@
       items={folder.children}
       enableMerge={false}
       compact={true}
+      scope="folder"
       outsideRoot={panelEl}
       hitRoot={panelEl}
       {onActivate}

@@ -17,4 +17,8 @@ describe('dropdownOpensUp', () => {
     expect(dropdownOpensUp({ top: 40, bottom: 80 }, menu, 160, gap)).toBe(false);
     expect(dropdownOpensUp({ top: 80, bottom: 120 }, menu, 160, gap)).toBe(true);
   });
+
+  it('上下剩余空间相等则向下', () => {
+    expect(dropdownOpensUp({ top: 80, bottom: 120 }, menu, 200, gap)).toBe(false);
+  });
 });

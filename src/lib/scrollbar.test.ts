@@ -16,10 +16,20 @@ describe('scrollbarThumb', () => {
     expect(t?.height).toBe(32);
     expect(t?.top).toBe(0);
   });
+
+  it('portH 或 trackH 非正则没有滑块', () => {
+    expect(scrollbarThumb(0, 200, 0, 100)).toBeNull();
+    expect(scrollbarThumb(100, 200, 0, 0)).toBeNull();
+  });
 });
 
 describe('scrollTopFromThumb', () => {
   it('滑块拖到最底则滚到最底', () => {
     expect(scrollTopFromThumb(50, 50, 100, 100, 200)).toBe(100);
+  });
+
+  it('滑块无行程或内容装得下则滚动量为 0', () => {
+    expect(scrollTopFromThumb(0, 100, 100, 100, 200)).toBe(0);
+    expect(scrollTopFromThumb(10, 20, 100, 200, 180)).toBe(0);
   });
 });

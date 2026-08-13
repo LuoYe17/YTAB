@@ -16,6 +16,16 @@ describe('testWallhavenKey', () => {
     await expect(testWallhavenKey('bad')).resolves.toBe('invalid');
   });
 
+  it('403 为无效', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 403 })));
+    await expect(testWallhavenKey('bad')).resolves.toBe('invalid');
+  });
+
+  it('500 为网络异常', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+    await expect(testWallhavenKey('abc')).resolves.toBe('network');
+  });
+
   it('抛错为网络异常', async () => {
     vi.stubGlobal(
       'fetch',
@@ -30,8 +40,9 @@ describe('testWallhavenKey', () => {
     const fetchMock = vi.fn(async () => new Response('{"data":{}}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     await testWallhavenKey('secret-key');
-    const first = fetchMock.mock.calls[0] as [RequestInfo | URL] | undefined;
-    expect(String(first?.[0])).toContain('apikey=secret-key');
+    const first = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit?] | undefined;
     expect(String(first?.[0])).toContain('wallhaven.cc/api/v1/settings');
+    expect(String(first?.[0])).not.toContain('apikey=');
+    expect((first?.[1]?.headers as Record<string, string>)['X-API-Key']).toBe('secret-key');
   });
 });

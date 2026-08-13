@@ -79,6 +79,7 @@
     {pageIndex}
     {pageCount}
     enableMerge={true}
+    scope="page"
     {onActivate}
     {onEvent}
     {onGridContextMenu}

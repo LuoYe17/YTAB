@@ -20,6 +20,15 @@ const CORS_HEADERS = {
   'Access-Control-Max-Age': '86400',
 };
 
+class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin') ?? '';
@@ -44,8 +53,14 @@ export default {
         }
         if (request.method === 'PUT') {
           const body = await request.text();
+          // ZIP+图标的上限；再大多半是坏请求，不进 R2。
           if (body.length > 12_000_000) return json({ error: '这份太大了' }, cors, 413);
-          JSON.parse(body);
+          // 只确认是 JSON。内容仍当密文整包落盘，不拆字段。
+          try {
+            JSON.parse(body);
+          } catch {
+            throw new ApiError(400, '这份不是 JSON');
+          }
           await env.BACKUPS.put(key, body, { httpMetadata: { contentType: 'application/json' } });
           return json({ ok: true }, cors);
         }
@@ -56,9 +71,10 @@ export default {
       }
       return json({ error: '没有这个接口' }, cors, 404);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '出错了';
-      const status = message === '未登录' ? 401 : 400;
-      return json({ error: message }, cors, status);
+      if (err instanceof ApiError) return json({ error: err.message }, cors, err.status);
+      // 运行时报错的原文（英文堆栈等）只进日志，不进界面。
+      console.error('[ytab-account]', err);
+      return json({ error: '出错了' }, cors, 400);
     }
   },
 };
@@ -93,7 +109,7 @@ function objectKey(provider: string, userId: string): string {
 
 async function authGithub(request: Request, env: Env): Promise<unknown> {
   const { code, redirectUri } = (await request.json()) as { code?: string; redirectUri?: string };
-  if (!code || !redirectUri) throw new Error('登录失败');
+  if (!code || !redirectUri) throw new ApiError(401, '登录失败');
   const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -105,7 +121,7 @@ async function authGithub(request: Request, env: Env): Promise<unknown> {
     }),
   });
   const tokenBody = (await tokenRes.json()) as { access_token?: string };
-  if (!tokenBody.access_token) throw new Error('登录失败');
+  if (!tokenBody.access_token) throw new ApiError(401, '登录失败');
   const userRes = await fetch('https://api.github.com/user', {
     headers: {
       Authorization: `Bearer ${tokenBody.access_token}`,
@@ -113,9 +129,9 @@ async function authGithub(request: Request, env: Env): Promise<unknown> {
       Accept: 'application/vnd.github+json',
     },
   });
-  if (!userRes.ok) throw new Error('登录失败');
+  if (!userRes.ok) throw new ApiError(401, '登录失败');
   const user = (await userRes.json()) as { id?: number; login?: string; avatar_url?: string };
-  if (!user.id) throw new Error('登录失败');
+  if (!user.id) throw new ApiError(401, '登录失败');
   return issue(env, 'github', String(user.id), user.login ?? 'GitHub', user.avatar_url);
 }
 
@@ -139,7 +155,7 @@ async function issue(
 async function readJwt(request: Request, env: Env): Promise<JwtPayload> {
   const header = request.headers.get('Authorization') ?? '';
   const raw = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (!raw) throw new Error('未登录');
+  if (!raw) throw new ApiError(401, '未登录');
   return verifyJwt(env.AUTH_SECRET, raw);
 }
 
@@ -176,20 +192,28 @@ async function signJwt(secret: string, payload: JwtPayload): Promise<string> {
 }
 
 async function verifyJwt(secret: string, token: string): Promise<JwtPayload> {
-  const parts = token.split('.');
-  if (parts.length !== 3) throw new Error('未登录');
-  const [head, body, sig] = parts;
-  const key = await hmacKey(secret);
-  const ok = await crypto.subtle.verify(
-    'HMAC',
-    key,
-    b64urlToBytes(sig),
-    new TextEncoder().encode(`${head}.${body}`),
-  );
-  if (!ok) throw new Error('未登录');
-  const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(body))) as JwtPayload;
-  if (payload.exp < Math.floor(Date.now() / 1000)) throw new Error('未登录');
-  if (payload.provider !== 'github') throw new Error('未登录');
-  if (!payload.sub) throw new Error('未登录');
-  return payload;
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) throw new ApiError(401, '未登录');
+    const [head, body, sig] = parts;
+    const key = await hmacKey(secret);
+    const ok = await crypto.subtle.verify(
+      'HMAC',
+      key,
+      b64urlToBytes(sig),
+      new TextEncoder().encode(`${head}.${body}`),
+    );
+    if (!ok) throw new ApiError(401, '未登录');
+    const payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(body))) as JwtPayload;
+    // exp 缺失或不是数字也按过期拒，免得 undefined 比较放行永不过期的 token。
+    if (!Number.isFinite(payload.exp) || payload.exp < Math.floor(Date.now() / 1000))
+      throw new ApiError(401, '未登录');
+    if (payload.provider !== 'github') throw new ApiError(401, '未登录');
+    if (!payload.sub) throw new ApiError(401, '未登录');
+    return payload;
+  } catch (err) {
+    // 坏 token 的 base64 / JSON 解析错也当未登录，不落进兜底 400。
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(401, '未登录');
+  }
 }

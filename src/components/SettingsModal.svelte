@@ -7,10 +7,10 @@
   import { plainNotice } from '../lib/notice';
   import { applyFilter, visibleTagPresets, type FilterAction } from '../lib/settingsFilters';
   import { testWallhavenKey } from '../lib/wallhavenKey';
-  import { fetchBackup, deleteBackup, putBackup } from '../lib/accountApi';
+  import { fetchBackup, deleteBackup } from '../lib/accountApi';
   import { signIn } from '../lib/accountAuth';
   import { accountConfigured } from '../lib/accountConfig';
-  import { makeBundle, unlockBundle } from '../lib/accountBackup';
+  import { setPassphraseAndUpload, unlockBundle } from '../lib/accountBackup';
   import { passphraseOk } from '../lib/accountCrypto';
   import {
     clearSession,
@@ -27,7 +27,7 @@
   import GhostTip from './GhostTip.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
 
-  type Tab = 'general' | 'wallpaper' | 'data';
+  type Tab = 'general' | 'wallpaper' | 'account';
   type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
 
   const TABS: { id: Tab; label: string }[] = [
@@ -248,11 +248,7 @@
     }
     accountBusy = true;
     try {
-      const { bundle, rawKey, salt } = await makeBundle(packCurrent(), passA);
-      await putBackup(session.token, bundle);
-      const next = { ...session, rawKey, salt, uploadedAt: new Date().toISOString() };
-      await saveSession(next);
-      session = next;
+      session = await setPassphraseAndUpload(packCurrent(), passA, session);
       closeSheet();
       plainNotice('ok', '已上传');
     } catch (err) {
@@ -277,6 +273,8 @@
         ...session,
         rawKey: got.rawKey,
         salt: got.salt,
+        iter: got.iter,
+        hasBackup: true,
         uploadedAt: session.uploadedAt,
       };
       await saveSession(next);
@@ -291,14 +289,6 @@
     }
   }
 
-  async function confirmThisMachine() {
-    sheet = 'set';
-  }
-
-  async function confirmCloud() {
-    sheet = 'unlock';
-  }
-
   async function confirmChange() {
     if (passA !== passB) {
       plainNotice('fail', '两次口令不一致');
@@ -311,18 +301,10 @@
     }
     accountBusy = true;
     try {
+      // 解开只为验旧口令，明文随即丢弃；上传的内容以这台当前状态为准（后写盖住先写）。
       const bundle = await fetchBackup(session.token);
       if (bundle) await unlockBundle(bundle, passOld);
-      const made = await makeBundle(packCurrent(), passA);
-      await putBackup(session.token, made.bundle);
-      const next = {
-        ...session,
-        rawKey: made.rawKey,
-        salt: made.salt,
-        uploadedAt: new Date().toISOString(),
-      };
-      await saveSession(next);
-      session = next;
+      session = await setPassphraseAndUpload(packCurrent(), passA, session);
       closeSheet();
       plainNotice('ok', '已改口令');
     } catch (err) {
@@ -337,7 +319,14 @@
     accountBusy = true;
     try {
       await deleteBackup(session.token);
-      const next = { ...session, uploadedAt: undefined };
+      const next = {
+        ...session,
+        rawKey: undefined,
+        salt: undefined,
+        iter: undefined,
+        uploadedAt: undefined,
+        hasBackup: false,
+      };
       await saveSession(next);
       session = next;
       closeSheet();
@@ -405,7 +394,7 @@
 </script>
 
 {#snippet helpMark(text: string)}
-  <GhostTip label={text} placement="se" wrap>
+  <GhostTip label={text} wrap>
     <button type="button" class="help" aria-label={text}>?</button>
   </GhostTip>
 {/snippet}
@@ -432,15 +421,15 @@
       <button
         type="button"
         class="who"
-        class:on={tab === 'data'}
-        onclick={() => (tab = 'data')}
+        class:on={tab === 'account'}
+        onclick={() => (tab = 'account')}
       >
         {#if session?.avatar}
           <img class="who-ava" src={session.avatar} alt="" />
         {:else}
           <span class="who-ava ph">{@render githubMark()}</span>
         {/if}
-        <span class="who-name">{session ? session.label : '登录'}</span>
+        <span class="who-name">{session ? session.label : accountConfigured() ? '登录' : '账号'}</span>
       </button>
       <nav bind:this={navEl}>
         <div
@@ -463,7 +452,7 @@
       </nav>
       <div class="foot">
         <div class="foot-start">
-          <GhostTip label="GitHub" placement="ne">
+          <GhostTip label="GitHub">
             <a class="icon" href={REPO_URL} target="_blank" rel="noreferrer" aria-label="GitHub">
               {@render githubMark()}
             </a>
@@ -746,7 +735,7 @@
                 <div class="block inline">
                   <div class="head">
                     <span class="title">云端备份</span>
-                    {@render helpMark('登录后改完自己传到云端。卸扩展或换机再登录，用恢复口令解开。可以不登。传到云端的是加密后的整份。口令忘了只能删掉重来。')}
+                    {@render helpMark('登录后改完自己传到云端。卸扩展或换机再登录，用恢复口令解开。可以不登。传到云端的是加密后的整份，服务器只见密文。口令忘了只能删掉重来。')}
                   </div>
                   <button type="button" class="action with-mark" disabled={accountBusy} onclick={() => login()}>
                     {@render githubMark()}
@@ -758,15 +747,15 @@
                   <div class="inline-row">
                     <div class="head">
                       <span class="title">云端备份</span>
-                      {@render helpMark('改完会自己传。后写盖住先写。退出后本机留下，不再上传。')}
+                      {@render helpMark('改完会自己传。后写盖住先写。传到云端的是加密后的整份，服务器只见密文。退出后本机留下，不再上传。')}
                     </div>
                     <span class="when">
                       {#if session.uploadedAt}
                         {formatBackupAt(session.uploadedAt)}
-                      {:else if unlocked}
-                        还没传过
+                      {:else if session.hasBackup}
+                        {unlocked ? '云端有一份' : '未解开'}
                       {:else}
-                        未解开
+                        还没传过
                       {/if}
                     </span>
                   </div>
@@ -775,15 +764,14 @@
                       <button type="button" class="ghost" disabled={accountBusy} onclick={() => (sheet = 'change')}>
                         改口令
                       </button>
-                    {:else}
+                    {:else if session.hasBackup !== false}
                       <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'unlock')}>
                         解开
                       </button>
-                      {#if onboardingDone}
-                        <button type="button" class="ghost" disabled={accountBusy} onclick={() => (sheet = 'set')}>
-                          用这台覆盖
-                        </button>
-                      {/if}
+                    {:else}
+                      <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'set')}>
+                        设口令
+                      </button>
                     {/if}
                     <button type="button" class="ghost" disabled={accountBusy} onclick={() => logout()}>退出</button>
                   </div>
@@ -824,10 +812,10 @@
           <p>云端有一份，这台也有。用哪边？</p>
           <div class="confirm-row">
             <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="ghost" disabled={accountBusy} onclick={() => confirmThisMachine()}>
+            <button type="button" class="ghost" disabled={accountBusy} onclick={() => (sheet = 'set')}>
               用这台的
             </button>
-            <button type="button" class="action" disabled={accountBusy} onclick={() => confirmCloud()}>
+            <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'unlock')}>
               用云端的
             </button>
           </div>
@@ -840,7 +828,11 @@
             <span class="title">恢复口令</span>
             {@render helpMark('用来加密云端这份。忘了就打不开，只能删掉重来。')}
           </div>
-          <p>至少 8 位。再输入一次确认。</p>
+          <p>
+            {session?.hasBackup
+              ? '会用这台的内容盖住云端那份，旧口令随之作废。至少 8 位。'
+              : '至少 8 位。再输入一次确认。'}
+          </p>
           <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
           <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
           <div class="confirm-row">

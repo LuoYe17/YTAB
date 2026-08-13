@@ -22,11 +22,10 @@
   import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
   import { applyImportedState } from '../../lib/importApply';
-  import { putBackup } from '../../lib/accountApi';
-  import { flushAccountBackup, makeBundle, scheduleAccountBackup } from '../../lib/accountBackup';
+  import { flushAccountBackup, scheduleAccountBackup, setPassphraseAndUpload } from '../../lib/accountBackup';
   import { backupInterest } from '../../lib/accountInterest';
   import { passphraseOk } from '../../lib/accountCrypto';
-  import { clearSession, loadSession, saveSession } from '../../lib/accountSession';
+  import { clearSession, loadSession, needsFirstPassphrase } from '../../lib/accountSession';
   import {
     createEmptyState,
     type AppItem,
@@ -75,7 +74,7 @@
   onMount(() => {
     const onHide = () => {
       if (document.visibilityState === 'hidden') {
-        flushAccountBackup(packCurrent());
+        flushAccountBackup();
       }
     };
     document.addEventListener('visibilitychange', onHide);
@@ -214,7 +213,7 @@
     }
     schedulePoolFill(ytab.settings);
     const session = await loadSession();
-    if (session && !session.rawKey) needPass = true;
+    if (needsFirstPassphrase(session)) needPass = true;
   }
 
   function openApp(app: AppItem) {
@@ -286,9 +285,7 @@
         needPass = false;
         return;
       }
-      const { bundle, rawKey, salt } = await makeBundle(packCurrent(), passA);
-      await putBackup(session.token, bundle);
-      await saveSession({ ...session, rawKey, salt, uploadedAt: new Date().toISOString() });
+      await setPassphraseAndUpload(packCurrent(), passA, session);
       needPass = false;
       passA = '';
       passB = '';
@@ -340,7 +337,7 @@
     </main>
 
     <div class="settings-slot">
-      <GhostTip label="设置" placement="ne">
+      <GhostTip label="设置">
         <button
           bind:this={settingsBtnEl}
           type="button"
@@ -429,9 +426,14 @@
         <p>用来加密云端这份。至少 8 位，忘了就打不开。</p>
         <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
         <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
-        <button type="button" class="pass-go" disabled={passBusy} onclick={confirmFirstPass}>
-          确定
-        </button>
+        <div class="pass-row">
+          <button type="button" class="pass-skip" disabled={passBusy} onclick={() => (needPass = false)}>
+            稍后
+          </button>
+          <button type="button" class="pass-go" disabled={passBusy} onclick={confirmFirstPass}>
+            确定
+          </button>
+        </div>
       </div>
     </div>
   {/if}
@@ -484,19 +486,31 @@
   .pass:focus {
     border-color: rgba(126, 203, 255, 0.55);
   }
-  .pass-go {
-    appearance: none;
-    width: 100%;
+  .pass-row {
+    display: flex;
+    gap: 0.4rem;
     margin-top: 0.2rem;
+  }
+  .pass-go,
+  .pass-skip {
+    appearance: none;
+    flex: 1;
     border: 0;
     border-radius: 8px;
     padding: 0.5rem;
-    background: #fff;
-    color: #111;
     font: inherit;
     cursor: pointer;
   }
-  .pass-go:disabled {
+  .pass-go {
+    background: #fff;
+    color: #111;
+  }
+  .pass-skip {
+    background: rgba(255, 255, 255, 0.12);
+    color: #f5f5f7;
+  }
+  .pass-go:disabled,
+  .pass-skip:disabled {
     opacity: 0.45;
     cursor: default;
   }

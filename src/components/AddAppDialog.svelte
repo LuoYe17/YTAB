@@ -26,6 +26,9 @@
   let icon = $state(initial?.icon ?? '');
   /* svelte-ignore state_referenced_locally */
   let iconField = $state(publicIconField(initial?.icon ?? ''));
+  // 用户给过的图（上传、手填、编辑带入）不被自动抓取盖掉；只有全自动来的图才允许换。
+  /* svelte-ignore state_referenced_locally */
+  let iconLocked = $state(Boolean((initial?.icon ?? '').trim()));
   let phase = $state<'idle' | 'scan' | 'success'>('idle');
   /* svelte-ignore state_referenced_locally */
   let canSave = $state(!!initial);
@@ -101,7 +104,10 @@
 
   function applyIconField() {
     const v = iconField.trim();
-    if (/^https?:\/\//i.test(v) || v.startsWith('data:')) icon = v;
+    if (/^https?:\/\//i.test(v) || v.startsWith('data:')) {
+      icon = v;
+      iconLocked = true;
+    }
   }
 
   $effect(() => {
@@ -132,7 +138,7 @@
     const stillCurrent = () => jobId === autofillGen && normalizeUrl(url) === jobUrl;
     const signal = AbortSignal.timeout(8000);
     const iconTask = (async () => {
-      if (publicIconField(iconField)) return;
+      if (iconLocked || publicIconField(iconField)) return;
       try {
         const resolved = await Promise.race([
           resolveAppIcon(normalized),
@@ -140,7 +146,7 @@
             signal.addEventListener('abort', () => r(''), { once: true });
           }),
         ]);
-        if (!stillCurrent() || publicIconField(iconField)) return;
+        if (!stillCurrent() || iconLocked || publicIconField(iconField)) return;
         icon = resolved;
       } catch {
         /* 回退字母占位 */
@@ -192,6 +198,7 @@
     reader.onload = () => {
       icon = String(reader.result);
       iconField = '';
+      iconLocked = true;
     };
     reader.readAsDataURL(file);
   }
@@ -225,7 +232,7 @@
 </script>
 
 {#snippet helpMark(text: string)}
-  <GhostTip label={text} placement="se" wrap>
+  <GhostTip label={text} wrap>
     <button type="button" class="help" aria-label={text}>?</button>
   </GhostTip>
 {/snippet}

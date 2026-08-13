@@ -44,6 +44,7 @@ async function readError(res: Response, fallback: string): Promise<AccountApiErr
   return new AccountApiError(fallback, res.status);
 }
 
+/** 用 GitHub 授权码换我们自己的会话令牌，并告知云端有没有份。 */
 export async function authWithGithub(code: string, redirectUri: string): Promise<AuthOk> {
   const res = await request('/v1/auth/github', {
     method: 'POST',
@@ -53,6 +54,7 @@ export async function authWithGithub(code: string, redirectUri: string): Promise
   return (await res.json()) as AuthOk;
 }
 
+/** 拉回密文。没有则 null；形状不对抛错。服务器不应看见明文。 */
 export async function fetchBackup(token: string): Promise<CipherBundle | null> {
   const res = await request('/v1/backup', { token });
   if (res.status === 404) return null;
@@ -62,6 +64,7 @@ export async function fetchBackup(token: string): Promise<CipherBundle | null> {
   return body;
 }
 
+/** 整份密文覆盖写入。后写盖住先写，服务端不做版本比对。 */
 export async function putBackup(token: string, bundle: CipherBundle): Promise<void> {
   const res = await request('/v1/backup', {
     method: 'PUT',
@@ -71,6 +74,7 @@ export async function putBackup(token: string, bundle: CipherBundle): Promise<vo
   if (!res.ok) throw await readError(res, '上传失败');
 }
 
+/** 只删云端密文。本机会话由调用方自己收。404 当已经没了。 */
 export async function deleteBackup(token: string): Promise<void> {
   const res = await request('/v1/backup', { method: 'DELETE', token });
   if (!res.ok && res.status !== 404) throw await readError(res, '删除失败');

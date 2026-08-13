@@ -3,13 +3,10 @@
 
   let {
     label,
-    placement = 'ne',
     wrap = false,
     children,
   }: {
     label: string;
-    /** 只作偏好；真正位置按视口空位算，避免被折叠层裁掉。 */
-    placement?: 'ne' | 'nw' | 'se';
     wrap?: boolean;
     children: import('svelte').Snippet;
   } = $props();
@@ -24,7 +21,7 @@
     window.clearTimeout(timer);
     timer = window.setTimeout(() => {
       show = true;
-    }, 400);
+    }, 400); // 划过不闪；停住才出提示
   }
 
   function leave() {
@@ -51,7 +48,6 @@
       });
     };
     place();
-    void placement;
   });
 </script>
 

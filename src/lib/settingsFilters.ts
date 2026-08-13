@@ -1,4 +1,4 @@
-/** 设置里壁纸筛选：纯度/分类/标签/排序/密钥。界面不允许全关；没密钥不能开「少儿不宜」。 */
+/** 设置里壁纸筛选：尺度/分类/标签/排序/密钥。界面不允许全关；没密钥不能开「少儿不宜」。 */
 
 import {
   DEFAULT_SETTINGS,
@@ -24,7 +24,7 @@ export function isTurningOffLast(
 }
 
 /**
- * 切换一项纯度。最后一项开着时关不掉；没密钥时开「少儿不宜」无效。
+ * 切换一项尺度。最后一项开着时关不掉；没密钥时开「少儿不宜」无效。
  */
 export function togglePurity(
   current: WallhavenPurity,
@@ -49,7 +49,7 @@ export function toggleCategory(
   return { ...current, [key]: next };
 }
 
-/** 清空密钥时把「少儿不宜」写成关；若因此一项都不剩，改开安全，避免纯度全关。 */
+/** 清空密钥时把「少儿不宜」写成关；若因此一项都不剩，改开安全，避免尺度全关。 */
 export function purityAfterClearingKey(current: WallhavenPurity): WallhavenPurity {
   if (!current.nsfw) return current;
   const next = { ...current, nsfw: false };
@@ -138,7 +138,7 @@ export type FilterResult = {
   invalidatePool: boolean;
 };
 
-/** 纯度/分类按字段比，避免键序让 JSON.stringify 误判；排序缺省当热门，标签仍按序列化比。 */
+/** 尺度/分类按字段比，避免键序让 JSON.stringify 误判；排序缺省当热门，标签仍按序列化比。 */
 function filterQueryChanged(prev: Settings, next: Settings): boolean {
   const p = prev.wallhavenPurity;
   const n = next.wallhavenPurity;
@@ -164,10 +164,10 @@ function withPoolFlag(prev: Settings, next: Settings): FilterResult {
 /**
  * 一次壁纸筛选控件操作收成新设置。小弹窗只展示 notice 并回写。
  * @param settings 当前设置
- * @param action 纯度 / 分类 / 标签 / 排序 / 密钥
- * @returns 关最后一项纯度或分类时 settings 原样，notice 为「尺度至少开一项」/「分类至少开一项」，invalidatePool 为 false。
+ * @param action 尺度 / 分类 / 标签 / 排序 / 密钥
+ * @returns 关最后一项尺度或分类时 settings 原样，notice 为「尺度至少开一项」/「分类至少开一项」，invalidatePool 为 false。
  *   没密钥开「少儿不宜」与 `togglePurity` 一样无效。改分类会丢掉当前菜单里没有的已选标签。
- *   invalidatePool 仅当纯度 / 分类 / 排序 / 标签真的变了（清空密钥若因此关了「少儿不宜」也算）。
+ *   invalidatePool 仅当尺度 / 分类 / 排序 / 标签真的变了（清空密钥若因此关了「少儿不宜」也算）。
  */
 export function applyFilter(settings: Settings, action: FilterAction): FilterResult {
   switch (action.type) {

@@ -106,7 +106,7 @@
       const bundle = await fetchBackup(pending.token);
       if (!bundle) throw new Error('云端还没有');
       const got = await unlockBundle(bundle, passA);
-      await saveSession({ ...pending, rawKey: got.rawKey, salt: got.salt });
+      await saveSession({ ...pending, rawKey: got.rawKey, salt: got.salt, iter: got.iter });
       phase = 'success';
       await onRestored(got.state);
     } catch (err) {

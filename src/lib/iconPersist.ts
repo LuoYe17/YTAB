@@ -76,12 +76,15 @@ export function hydrateIconBlobs(state: YtabState, blobs: Map<string, string>): 
   });
 }
 
+/** 这个 IDB key 是否属于已删除的 App；壁纸 key 恒为 false。 */
+export function isStaleIconKey(key: string, liveIds: Set<string>): boolean {
+  if (!key.startsWith(IDB_ICON_PREFIX)) return false;
+  return !liveIds.has(key.slice(IDB_ICON_PREFIX.length));
+}
+
 /** 已删除 App 的 IDB 图标 key；壁纸 key 不在此列。 */
 export function staleIconKeys(existingKeys: string[], liveIds: Set<string>): string[] {
-  return existingKeys.filter((key) => {
-    if (!key.startsWith(IDB_ICON_PREFIX)) return false;
-    return !liveIds.has(key.slice(IDB_ICON_PREFIX.length));
-  });
+  return existingKeys.filter((key) => isStaleIconKey(key, liveIds));
 }
 
 /**

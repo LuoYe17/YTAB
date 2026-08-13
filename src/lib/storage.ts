@@ -8,7 +8,7 @@
 import { storage } from 'wxt/utils/storage';
 import { applyBundledIcons, bundledIconDataUrls, pack } from './appIcons';
 import { createEmptyState, mergeSettings, type YtabState } from './types';
-import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, staleIconKeys } from './iconPersist';
+import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, isStaleIconKey } from './iconPersist';
 
 const META_KEY = 'local:ytab:v1' as const;
 /** Legacy key — read once to migrate, then clear. */
@@ -33,8 +33,11 @@ export type KvStore = {
   get(key: string): Promise<string>;
   set(key: string, value: string): Promise<void>;
   keys(): Promise<string[]>;
-  /** 同一次事务写入 entries 并删掉 deleteKeys：半截 IDB 比慢更可怕。 */
-  writeBatch(entries: Map<string, string>, deleteKeys: string[]): Promise<void>;
+  /**
+   * 同一次事务里写入 entries，并删掉现存 key 中 `dropKey` 判真的那些。
+   * 传谓词而不是 key 列表：列举必须发生在事务内，半截 IDB 比慢更可怕。
+   */
+  writeBatch(entries: Map<string, string>, dropKey: (key: string) => boolean): Promise<void>;
 };
 
 export type Persist = {
@@ -87,7 +90,7 @@ export function createPersist({ meta, kv }: { meta: MetaStore; kv: KvStore }): P
   async function writeIconBlobs(blobs: Map<string, string>, liveIds: Set<string>): Promise<void> {
     const entries = new Map<string, string>();
     for (const [id, data] of blobs) entries.set(iconIdbKey(id), data);
-    await kv.writeBatch(entries, staleIconKeys(await kv.keys(), liveIds));
+    await kv.writeBatch(entries, (key) => isStaleIconKey(key, liveIds));
   }
 
   async function readIconBlobs(): Promise<Map<string, string>> {
@@ -266,7 +269,7 @@ function idbKvStore(): KvStore {
           }),
       ),
 
-    writeBatch: (entries, deleteKeys) =>
+    writeBatch: (entries, dropKey) =>
       withDb(
         (db) =>
           new Promise<void>((resolve, reject) => {
@@ -275,7 +278,12 @@ function idbKvStore(): KvStore {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error ?? new Error('idb batch write failed'));
             for (const [key, value] of entries) store.put(value, key);
-            for (const key of deleteKeys) store.delete(key);
+            const keysReq = store.getAllKeys();
+            keysReq.onsuccess = () => {
+              for (const key of keysReq.result ?? []) {
+                if (typeof key === 'string' && dropKey(key)) store.delete(key);
+              }
+            };
           }),
       ),
   };

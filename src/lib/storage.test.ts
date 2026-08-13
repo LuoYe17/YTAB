@@ -61,9 +61,11 @@ function memPersist(seed: { meta?: YtabState; legacy?: string } = {}) {
       if (fail.kvSet) throw new Error('kv set down');
       kvMap.set(key, value);
     },
-    writeBatch: async (entries, deleteKeys) => {
+    writeBatch: async (entries, dropKey) => {
       calls.push('kv.writeBatch');
-      batches.push({ entries: new Map(entries), deleteKeys: [...deleteKeys] });
+      // 与真实 adapter 一样：列举发生在这一次事务里
+      const deleteKeys = [...kvMap.keys()].filter(dropKey);
+      batches.push({ entries: new Map(entries), deleteKeys });
       if (fail.writeBatch) throw new Error('kv batch down');
       for (const [key, value] of entries) kvMap.set(key, value);
       for (const key of deleteKeys) kvMap.delete(key);

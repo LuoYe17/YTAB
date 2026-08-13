@@ -2,11 +2,13 @@
   let {
     label,
     placement = 'ne',
+    wrap = false,
     children,
   }: {
     label: string;
-    /** ne 为锚点右上，nw 为锚点左上。 */
-    placement?: 'ne' | 'nw';
+    /** ne / nw 在锚点上方，se 在下方（设置里问号说明朝下，免得被顶栏裁切）。 */
+    placement?: 'ne' | 'nw' | 'se';
+    wrap?: boolean;
     children: import('svelte').Snippet;
   } = $props();
 
@@ -29,7 +31,7 @@
 <div class="wrap" role="group" onpointerenter={enter} onpointerleave={leave}>
   {@render children()}
   {#if show}
-    <span class="tip {placement}" role="tooltip">{label}</span>
+    <span class="tip {placement}" class:long={wrap} role="tooltip">{label}</span>
   {/if}
 </div>
 
@@ -59,6 +61,16 @@
   }
   .nw {
     right: 50%;
+  }
+  .se {
+    top: calc(100% + 8px);
+    bottom: auto;
+    left: 50%;
+  }
+  .long {
+    white-space: normal;
+    width: max-content;
+    max-width: 16rem;
   }
   @keyframes tip-in {
     from {

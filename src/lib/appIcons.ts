@@ -4,6 +4,10 @@ import { getBestIcon } from 'favicon-pro';
 import type { AppItem, YtabState } from './types';
 
 import githubSvg from '../assets/app-icons/github.com.svg?raw';
+import cloudflareSvg from '../assets/app-icons/dash.cloudflare.com.svg?raw';
+import cursorSvg from '../assets/app-icons/cursor.com.svg?raw';
+import grokSvg from '../assets/app-icons/grok.com.svg?raw';
+import xSvg from '../assets/app-icons/x.com.svg?raw';
 import gmailSvg from '../assets/app-icons/mail.google.com.svg?raw';
 import geminiSvg from '../assets/app-icons/gemini.google.com.svg?raw';
 import chatgptSvg from '../assets/app-icons/chatgpt.com.svg?raw';
@@ -26,6 +30,16 @@ export function svgDataUrl(svg: string): string {
 
 const BUNDLED: Record<string, string> = {
   'github.com': svgDataUrl(githubSvg),
+  'dash.cloudflare.com': svgDataUrl(cloudflareSvg),
+  'www.cloudflare.com': svgDataUrl(cloudflareSvg),
+  'cloudflare.com': svgDataUrl(cloudflareSvg),
+  'cursor.com': svgDataUrl(cursorSvg),
+  'www.cursor.com': svgDataUrl(cursorSvg),
+  'grok.com': svgDataUrl(grokSvg),
+  'www.grok.com': svgDataUrl(grokSvg),
+  'x.com': svgDataUrl(xSvg),
+  'twitter.com': svgDataUrl(xSvg),
+  'www.x.com': svgDataUrl(xSvg),
   'mail.google.com': svgDataUrl(gmailSvg),
   'gemini.google.com': svgDataUrl(geminiSvg),
   'chatgpt.com': svgDataUrl(chatgptSvg),
@@ -56,6 +70,13 @@ export function displayAppIcon(siteUrl: string, icon: string): string {
     return bundled;
   }
   return icon;
+}
+
+/** 给 `<img src>` 用。idb: / 相对路径会裂图，此时空串让调用方走字号占位。 */
+export function tileIconSrc(siteUrl: string, icon: string): string {
+  const src = displayAppIcon(siteUrl, icon);
+  if (!src || src.startsWith('idb:') || src.startsWith('/') || src.startsWith('chrome:')) return '';
+  return src;
 }
 
 /** 作者默认配置按 hostname 命中的内置图；没有则空串。 */
@@ -93,10 +114,11 @@ async function urlToDataUrl(url: string): Promise<string> {
   }
 }
 
-/** 空 / 裂图引用 / Google 小图才换成内置；用户上传或自定义 URL 不动。 */
+/** 空 / 裂图引用 / Google 小图 / 旧内置 SVG 才换成内置；用户上传的 png/jpg/webp 不动。 */
 function shouldApplyBundledIcon(icon: string): boolean {
   if (!icon) return true;
   if (icon.startsWith('idb:') || icon.startsWith('/') || icon.startsWith('chrome:')) return true;
+  if (icon.startsWith('data:image/svg+xml')) return true;
   try {
     const u = new URL(icon);
     return u.hostname === 'www.google.com' && u.pathname.includes('/s2/favicons');
@@ -105,7 +127,7 @@ function shouldApplyBundledIcon(icon: string): boolean {
   }
 }
 
-/** 把内置表里的图填进网格；只改 hostname 命中、且仍是自动抓取残留的 App。 */
+/** 把内置表里的图填进网格；只改 hostname 命中、且仍是自动抓取 / 旧内置 SVG 的 App。 */
 export function applyBundledIcons(state: YtabState, dataUrls: Map<string, string>): YtabState {
   const mapApp = (app: AppItem): AppItem => {
     if (!shouldApplyBundledIcon(app.icon)) return app;

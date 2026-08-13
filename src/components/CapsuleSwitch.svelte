@@ -3,11 +3,14 @@
     on = false,
     label,
     disabled = false,
+    tile = false,
     onChange,
   }: {
     on: boolean;
     label: string;
     disabled?: boolean;
+    /** 铺满格子的方块（纯度 / 分类 / 标签）；默认胶囊。 */
+    tile?: boolean;
     onChange: (next: boolean) => void;
   } = $props();
 
@@ -38,6 +41,7 @@
   class="cap"
   class:on
   class:dim={disabled}
+  class:tile
   role="switch"
   aria-checked={on}
   aria-disabled={disabled}
@@ -89,6 +93,25 @@
     background: rgba(126, 203, 255, 0.28);
     border-color: rgba(126, 203, 255, 0.55);
     color: #fff;
+  }
+  .tile {
+    width: 100%;
+    border-radius: 8px;
+    padding: 0.48rem 0.4rem;
+    font-weight: 600;
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.14);
+    color: rgba(255, 255, 255, 0.36);
+  }
+  .tile:hover:not(:disabled):not(.on) {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .tile.on,
+  .tile.on:hover:not(:disabled) {
+    background: #fff;
+    border-color: #fff;
+    color: #111;
   }
   .cap.dim {
     opacity: 0.42;

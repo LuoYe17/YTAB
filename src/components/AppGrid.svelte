@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { fade } from 'svelte/transition';
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
   import type { IconSortDragOutcome } from '../lib/iconSortDrag';
+  import CtxMenu from './CtxMenu.svelte';
   import IconSortGrid from './IconSortGrid.svelte';
 
   /** 起始页对 App 网格拖拽结果的接线（由 IconSortDragOutcome 适配而来） */
   export type AppGridDnd = {
-    onMerge: (fromId: string, ontoId: string) => void;
+    onMerge: (fromId: string, ontoId: string, folderId: string) => void;
     onDropIntoFolder: (appId: string, folderId: string) => void;
     onReorderPage: (pageItems: GridItem[]) => void;
     onPageFlip: (toPage: number, fromPageWithoutItem: GridItem[], item: GridItem) => void;
@@ -22,6 +22,9 @@
     onOpenFolder,
     onPageChange,
     onAdd,
+    onEditApp,
+    onDeleteApp,
+    onDeleteFolder,
     dnd,
     hitRoot = null,
   }: {
@@ -32,13 +35,33 @@
     onOpenFolder: (folder: FolderItem) => void;
     onPageChange?: (index: number) => void;
     onAdd: () => void;
+    onEditApp: (app: AppItem) => void;
+    onDeleteApp: (app: AppItem) => void;
+    onDeleteFolder: (folder: FolderItem) => void;
     dnd: AppGridDnd;
     /** 落点带；起始页传 main，这样时钟/搜索上方也能插到首位 */
     hitRoot?: HTMLElement | null;
   } = $props();
 
-  let menu = $state<{ x: number; y: number } | null>(null);
+  let menu = $state<{ x: number; y: number; target: GridItem | null } | null>(null);
   let slotEl = $state<HTMLElement | null>(null);
+
+  const menuItems = $derived.by(() => {
+    if (!menu) return [];
+    const target = menu.target;
+    if (!target) {
+      return [{ label: '添加 App', icon: 'add' as const, onPick: () => onAdd() }];
+    }
+    if (target.kind === 'app') {
+      return [
+        { label: '编辑', icon: 'edit' as const, onPick: () => onEditApp(target) },
+        { label: '删除', icon: 'delete' as const, danger: true, onPick: () => onDeleteApp(target) },
+      ];
+    }
+    return [
+      { label: '删除', icon: 'delete' as const, danger: true, onPick: () => onDeleteFolder(target) },
+    ];
+  });
 
   function onActivate(item: GridItem) {
     menu = null;
@@ -58,7 +81,7 @@
         dnd.onReorderPage(outcome.items);
         break;
       case 'merge':
-        dnd.onMerge(outcome.fromId, outcome.ontoId);
+        dnd.onMerge(outcome.fromId, outcome.ontoId, outcome.folderId);
         break;
       case 'intoFolder':
         dnd.onDropIntoFolder(outcome.appId, outcome.folderId);
@@ -72,18 +95,13 @@
     }
   }
 
-  function onGridContextMenu(e: MouseEvent) {
+  function onGridContextMenu(e: MouseEvent, item: GridItem | null) {
     e.preventDefault();
-    menu = { x: e.clientX, y: e.clientY };
+    menu = { x: e.clientX, y: e.clientY, target: item };
   }
 
   function closeMenu() {
     menu = null;
-  }
-
-  function addFromMenu() {
-    menu = null;
-    onAdd();
   }
 </script>
 
@@ -118,11 +136,7 @@
 </div>
 
 {#if menu}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="menu-backdrop" onclick={closeMenu} role="presentation" transition:fade={{ duration: 120 }}></div>
-  <div class="ctx-menu" style:left={`${menu.x}px`} style:top={`${menu.y}px`} role="menu" transition:fade={{ duration: 120 }}>
-    <button type="button" role="menuitem" onclick={addFromMenu}>添加 App</button>
-  </div>
+  <CtxMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
 {/if}
 
 <style>
@@ -156,37 +170,5 @@
   }
   .dot.active {
     background: #fff;
-  }
-  .menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-  }
-  .ctx-menu {
-    position: fixed;
-    z-index: 61;
-    min-width: 132px;
-    padding: 0.3rem;
-    border-radius: 10px;
-    background: rgba(32, 32, 36, 0.72);
-    backdrop-filter: blur(18px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-  }
-  .ctx-menu button {
-    appearance: none;
-    width: 100%;
-    border: 0;
-    background: transparent;
-    color: #f5f5f7;
-    text-align: left;
-    padding: 0.45rem 0.65rem;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  .ctx-menu button:hover {
-    background: rgba(255, 255, 255, 0.14);
   }
 </style>

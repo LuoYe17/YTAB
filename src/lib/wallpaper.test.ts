@@ -1,10 +1,93 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, type WallpaperState } from './types';
-import { createWallpaperSession, todayLocal, type WallpaperItem } from './wallpaper';
+import { DEFAULT_SETTINGS, mergeSettings, type WallpaperState } from './types';
+import {
+  createWallpaperSession,
+  tagsAfterCategoriesChange,
+  todayLocal,
+  visibleTagPresets,
+  wallhavenSearchParams,
+  type WallpaperItem,
+} from './wallpaper';
 
 function item(id: string): WallpaperItem {
   return { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: '2099-01-01' };
 }
+
+describe('mergeSettings', () => {
+  it('旧设置缺字段则补上默认动漫和热门', () => {
+    const s = mergeSettings({ openTarget: 'new' });
+    expect(s.openTarget).toBe('new');
+    expect(s.wallhavenCategories).toEqual(DEFAULT_SETTINGS.wallhavenCategories);
+    expect(s.wallhavenSorting).toBe('toplist');
+    expect(s.wallhavenApiKey).toBe('');
+  });
+});
+
+describe('wallhavenSearchParams', () => {
+  it('默认热门近一月、只要动漫、不带关键词、桌面比例仍在', () => {
+    const p = wallhavenSearchParams(DEFAULT_SETTINGS);
+    expect(p.get('sorting')).toBe('toplist');
+    expect(p.get('topRange')).toBe('1M');
+    expect(p.get('q')).toBeNull();
+    expect(p.get('purity')).toBe('100');
+    expect(p.get('categories')).toBe('010');
+    expect(p.get('atleast')).toBe('1920x1080');
+    expect(p.get('ratios')).toBe('16x9,16x10');
+  });
+
+  it('选了标签则按空格写入 q', () => {
+    const p = wallhavenSearchParams({
+      ...DEFAULT_SETTINGS,
+      wallhavenTags: ['anime girls', 'night'],
+    });
+    expect(p.get('q')).toBe('anime girls night');
+  });
+
+  it('当前分类没有的标签不写入 q', () => {
+    const p = wallhavenSearchParams({
+      ...DEFAULT_SETTINGS,
+      wallhavenCategories: { general: true, anime: false, people: false },
+      wallhavenTags: ['anime girls', 'night'],
+    });
+    expect(p.get('q')).toBe('night');
+  });
+});
+
+describe('visibleTagPresets', () => {
+  it('只开动漫则有少女、没有风景摄影词', () => {
+    const ids = visibleTagPresets({ general: false, anime: true, people: false }).map((t) => t.id);
+    expect(ids).toContain('anime girls');
+    expect(ids).not.toContain('landscape');
+  });
+
+  it('只开常规则有风景、没有少女', () => {
+    const ids = visibleTagPresets({ general: true, anime: false, people: false }).map((t) => t.id);
+    expect(ids).toContain('landscape');
+    expect(ids).not.toContain('anime girls');
+  });
+
+  it('多开分类时共用标签只出现一次', () => {
+    const ids = visibleTagPresets({ general: true, anime: true, people: false }).map((t) => t.id);
+    expect(ids.filter((id) => id === 'night')).toHaveLength(1);
+  });
+
+  it('分类缺字段时仍给出默认动漫菜单', () => {
+    const ids = visibleTagPresets(undefined).map((t) => t.id);
+    expect(ids).toContain('anime girls');
+  });
+});
+
+describe('tagsAfterCategoriesChange', () => {
+  it('关掉动漫则去掉少女，留下常规也有的夜', () => {
+    expect(
+      tagsAfterCategoriesChange(['anime girls', 'night'], {
+        general: true,
+        anime: false,
+        people: false,
+      }),
+    ).toEqual(['night']);
+  });
+});
 
 describe('wallpaper session', () => {
   it('prepare 成功后 commit 交出成图，busy 在两次调用之间锁住', async () => {

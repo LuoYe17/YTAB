@@ -1,8 +1,8 @@
 <script lang="ts">
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
-  import type { GridItem } from '../lib/types';
-  import { displayAppIcon } from '../lib/appIcons';
+  import type { FolderItem, GridItem } from '../lib/types';
+  import { bundledIconUrl, displayAppIcon, tileIconSrc } from '../lib/appIcons';
   import type { IconSortDragOutcome } from '../lib/iconSortDrag';
   import {
     cellHit,
@@ -34,14 +34,14 @@
     pageCount?: number;
     onActivate: (item: GridItem) => void;
     onDragOutcome: (outcome: IconSortDragOutcome) => void;
-    onGridContextMenu?: (e: MouseEvent) => void;
+    onGridContextMenu?: (e: MouseEvent, item: GridItem | null) => void;
     /** 指针拖出此元素外并停住 → 仅视觉关窗，拖拽继续跟手 */
     outsideRoot?: HTMLElement | null;
     /** 比网格更宽的落点带；起始页为 grid-slot，文件夹为面板 */
     hitRoot?: HTMLElement | null;
   } = $props();
 
-  const flipMs = 220;
+  const flipMs = 300;
   const MERGE_DWELL_MS = 400;
   const INSERT_DWELL_MS = 220;
   const OUTSIDE_DWELL_MS = 320;
@@ -71,22 +71,30 @@
   let orderAtDragStart: string[] = [];
   let flipCooldownUntil = 0;
   let gridEl = $state<HTMLElement | null>(null);
+  /** 合文件夹后先改本地再等 props，避免先闪回再顺切。 */
+  let holdLocal = false;
 
   $effect(() => {
-    if (!activeId) {
-      localItems = items.map((i) => i);
+    if (activeId) {
+      // 拖拽中仅在跨页后（集合变了且仍含 active）才同步 props
+      const propIds = new Set(items.map((i) => i.id));
+      const localIds = new Set(localItems.map((i) => i.id));
+      const sameSet = propIds.size === localIds.size && [...propIds].every((id) => localIds.has(id));
+      if (!sameSet && propIds.has(activeId)) {
+        localItems = items.map((i) => i);
+        lastInsertKey = '';
+        orderDirty = false;
+        orderAtDragStart = localItems.map((i) => i.id);
+      }
       return;
     }
-    // 拖拽中仅在跨页后（集合变了且仍含 active）才同步 props
-    const propIds = new Set(items.map((i) => i.id));
-    const localIds = new Set(localItems.map((i) => i.id));
-    const sameSet = propIds.size === localIds.size && [...propIds].every((id) => localIds.has(id));
-    if (!sameSet && propIds.has(activeId)) {
-      localItems = items.map((i) => i);
-      lastInsertKey = '';
-      orderDirty = false;
-      orderAtDragStart = localItems.map((i) => i.id);
+    if (holdLocal) {
+      const localIds = new Set(localItems.map((i) => i.id));
+      const propsMatch = items.length === localItems.length && items.every((i) => localIds.has(i.id));
+      if (!propsMatch) return;
+      holdLocal = false;
     }
+    localItems = items.map((i) => i);
   });
 
   function clearDwell() {
@@ -484,8 +492,27 @@
       const source = localItems.find((i) => i.id === sourceId) ?? items.find((i) => i.id === sourceId);
       const target = localItems.find((i) => i.id === dwellId) ?? items.find((i) => i.id === dwellId);
       if (source?.kind === 'app' && target?.kind === 'app') {
-        onDragOutcome({ type: 'merge', fromId: sourceId, ontoId: dwellId });
+        const folderId = crypto.randomUUID();
+        const folder: FolderItem = {
+          id: folderId,
+          kind: 'folder',
+          name: '文件夹',
+          children: [target, source],
+        };
+        holdLocal = true;
+        localItems = localItems
+          .filter((i) => i.id !== sourceId)
+          .map((i) => (i.id === dwellId ? folder : i));
+        onDragOutcome({ type: 'merge', fromId: sourceId, ontoId: dwellId, folderId });
       } else if (source?.kind === 'app' && target?.kind === 'folder') {
+        holdLocal = true;
+        localItems = localItems
+          .filter((i) => i.id !== sourceId)
+          .map((i) =>
+            i.id === dwellId && i.kind === 'folder'
+              ? { ...i, children: [...i.children, source] }
+              : i,
+          );
         onDragOutcome({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
       }
       orderDirty = false;
@@ -508,6 +535,14 @@
     if (suppressClick || activeId) return;
     onActivate(item);
   }
+
+  function onContextMenu(e: MouseEvent) {
+    if (!onGridContextMenu) return;
+    e.preventDefault();
+    const id = (e.target as HTMLElement | null)?.closest('[data-tile-id]')?.getAttribute('data-tile-id');
+    const item = id ? (localItems.find((i) => i.id === id) ?? null) : null;
+    onGridContextMenu(e, item);
+  }
 </script>
 
 <DragDropProvider {onDragStart} {onDragMove} {onDragOver} {onDragEnd}>
@@ -518,7 +553,7 @@
     class:compact
     data-ytab-grid={compact ? 'folder' : 'page'}
     role="presentation"
-    oncontextmenu={onGridContextMenu}
+    oncontextmenu={onContextMenu}
   >
     {#each localItems as item (item.id)}
       <div animate:flip={{ duration: flipMs }}>
@@ -541,10 +576,13 @@
           {#if a.kind === 'folder'}
             <div class="folder-preview">
               {#each Array.from({ length: 4 }, (_, i) => a.children[i] ?? null) as child}
-                {#if child?.icon}
-                  <img src={displayAppIcon(child.url, child.icon)} alt="" />
-                {:else if child}
-                  <span class="ph"></span>
+                {#if child}
+                  {@const src = tileIconSrc(child.url, child.icon) || bundledIconUrl(child.url)}
+                  {#if src}
+                    <img src={src} alt="" />
+                  {:else}
+                    <span class="ph">{child.name.slice(0, 1)}</span>
+                  {/if}
                 {:else}
                   <span class="slot"></span>
                 {/if}

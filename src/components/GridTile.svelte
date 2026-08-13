@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createDraggable, createDroppable } from '@dnd-kit/svelte';
-  import { bundledIconUrl, displayAppIcon } from '../lib/appIcons';
+  import { bundledIconUrl, displayAppIcon, tileIconSrc } from '../lib/appIcons';
   import type { GridItem } from '../lib/types';
 
   let {
@@ -35,6 +35,10 @@
     },
   });
 
+  function childThumb(child: { url: string; icon: string }): string {
+    return tileIconSrc(child.url, child.icon) || bundledIconUrl(child.url);
+  }
+
   const iconSrc = $derived(item.kind === 'app' ? displayAppIcon(item.url, item.icon) : '');
   const showIcon = $derived(
     !!iconSrc &&
@@ -64,10 +68,13 @@
     {#if item.kind === 'folder'}
       <div class="folder-preview">
         {#each Array.from({ length: 4 }, (_, i) => item.children[i] ?? null) as child}
-          {#if child?.icon}
-            <img src={displayAppIcon(child.url, child.icon)} alt="" draggable="false" />
-          {:else if child}
-            <span class="ph"></span>
+          {#if child}
+            {@const src = childThumb(child)}
+            {#if src}
+              <img src={src} alt="" draggable="false" />
+            {:else}
+              <span class="ph">{child.name.slice(0, 1)}</span>
+            {/if}
           {:else}
             <span class="slot"></span>
           {/if}
@@ -164,6 +171,19 @@
   .icon.preview {
     background: rgba(255, 255, 255, 0.28);
   }
+  .folder-preview {
+    animation: folder-in 0.28s ease;
+  }
+  @keyframes folder-in {
+    from {
+      opacity: 0;
+      transform: scale(0.82);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
   .folder-preview,
   .merge-preview {
     display: grid;
@@ -182,10 +202,17 @@
     height: 100%;
     min-height: 0;
     border-radius: 4px;
-    object-fit: cover;
+    object-fit: contain;
     background: rgba(255, 255, 255, 0.35);
   }
+  .folder-preview img {
+    background: rgba(255, 255, 255, 0.16);
+  }
   .folder-preview .ph {
+    display: grid;
+    place-items: center;
+    font-size: 0.62rem;
+    font-weight: 650;
     background: rgba(0, 0, 0, 0.2);
   }
   .folder-preview .slot {

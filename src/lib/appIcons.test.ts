@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getBestIcon } from 'favicon-pro';
-import { applyBundledIcons, bundledIconUrl, displayAppIcon, hostnameOf, resolveAppIcon, svgDataUrl } from './appIcons';
+import { applyBundledIcons, bundledIconUrl, displayAppIcon, hostnameOf, resolveAppIcon, svgDataUrl, tileIconSrc } from './appIcons';
+import cloudflareSvg from '../assets/app-icons/dash.cloudflare.com.svg?raw';
 import deepseekSvg from '../assets/app-icons/chat.deepseek.com.svg?raw';
 import bingSvg from '../assets/bing.svg?raw';
 import { createEmptyState, type AppItem } from './types';
@@ -21,6 +22,11 @@ describe('bundled App icons', () => {
 
   it('bundledIconUrl：作者默认站有内置，未知站为空', () => {
     expect(bundledIconUrl('https://github.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://dash.cloudflare.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://cursor.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://grok.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://x.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://twitter.com')).toMatch(/^data:image\/svg\+xml/);
     expect(bundledIconUrl('https://www.bilibili.com')).toMatch(/^data:image\/svg\+xml/);
     expect(bundledIconUrl('https://linux.do')).toBeTruthy();
     expect(bundledIconUrl('https://mail.163.com')).toBeTruthy();
@@ -34,6 +40,11 @@ describe('bundled App icons', () => {
     expect(displayAppIcon(site, '/assets/x.svg')).toMatch(/^data:image\/svg\+xml/);
     expect(displayAppIcon(site, 'data:keep')).toBe('data:keep');
     expect(displayAppIcon('https://example.com', '/assets/x.svg')).toBe('/assets/x.svg');
+  });
+
+  it('tileIconSrc：idb: 对未知站给空串，避免 img 裂图', () => {
+    expect(tileIconSrc('https://example.com', 'idb:abc')).toBe('');
+    expect(tileIconSrc('https://github.com', 'idb:abc')).toMatch(/^data:image\/svg\+xml/);
   });
 
   it('applyBundledIcons：只替换 hostname 命中且仍是自动抓取残留的 App', () => {
@@ -68,10 +79,21 @@ describe('bundled App icons', () => {
     expect(f.children[0]?.icon).toBe('data:gm');
   });
 
+  it('applyBundledIcons：内置站的旧 SVG data URL 可换代', () => {
+    const state = {
+      ...createEmptyState(),
+      pages: [[app('cf', 'https://dash.cloudflare.com', 'data:image/svg+xml,<svg></svg>')]],
+    };
+    const next = applyBundledIcons(state, new Map([['dash.cloudflare.com', 'data:cf-new']]));
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe('data:cf-new');
+  });
+
   it('内置 SVG 不含 XML 非法控制符', () => {
     const illegal = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/;
     expect(deepseekSvg).not.toMatch(illegal);
     expect(bingSvg).not.toMatch(illegal);
+    expect(cloudflareSvg).not.toMatch(illegal);
+    expect(cloudflareSvg.match(/<svg/g)?.length).toBe(1);
   });
 
   it('svgDataUrl 剥掉 form feed，避免 img 裂图', () => {

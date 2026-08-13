@@ -69,4 +69,21 @@ describe('exportYtab', () => {
       faviconUrlFor('https://example.com/b'),
     );
   });
+
+  it('不含密钥时测通标记一并清掉，避免勾还在密钥却空', async () => {
+    const blob = await exportYtab(
+      {
+        ...createEmptyState(),
+        settings: {
+          ...createEmptyState().settings,
+          wallhavenApiKey: 'secret',
+          wallhavenKeyOk: true,
+        },
+      },
+      { includeIcons: false, includeApiKey: false },
+    );
+    const { state } = await readExport(blob);
+    expect(state.settings.wallhavenApiKey).toBe('');
+    expect(state.settings.wallhavenKeyOk).toBe(false);
+  });
 });

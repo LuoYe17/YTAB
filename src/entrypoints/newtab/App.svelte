@@ -22,9 +22,12 @@
     openFolderItem as gridOpenFolderItem,
     pageFlipDuringDrag as gridPageFlipDuringDrag,
     paginate,
+    removeApp as gridRemoveApp,
+    removeFolder as gridRemoveFolder,
     renameFolder as gridRenameFolder,
     reorderFolderChildren as gridReorderFolderChildren,
     reorderPage as gridReorderPage,
+    updateApp as gridUpdateApp,
     type AppGridDragSnapshot,
     type AppGridView,
   } from '../../lib/appGrid';
@@ -64,6 +67,7 @@
   let settingsOpen = $state(false);
   let settingsHighlight = $state<WallpaperFailFocus | null>(null);
   let addOpen = $state(false);
+  let editingApp = $state<AppItem | null>(null);
   let openFolder = $state<FolderItem | null>(null);
   /** Esc / 取消跨页拖时整表回滚 */
   let dragPagesSnapshot = $state<AppGridDragSnapshot | null>(null);
@@ -92,7 +96,7 @@
       ready = true;
       return;
     }
-    if (!localStorage.getItem('ytab:icon-bundle-v8')) {
+    if (!localStorage.getItem('ytab:icon-bundle-v10')) {
       try {
         const bundled = await bundledIconDataUrls();
         if (bundled.size > 0) {
@@ -102,7 +106,7 @@
       } catch {
         /* 内置图升级失败不挡起始页 */
       }
-      localStorage.setItem('ytab:icon-bundle-v8', '1');
+      localStorage.setItem('ytab:icon-bundle-v10', '1');
     }
     displayUrl = ytab.wallpaper.imageUrl;
     ready = true;
@@ -243,10 +247,25 @@
   async function addApp(app: AppItem) {
     await applyGrid(gridAddApp(gridView(), app));
     addOpen = false;
+    editingApp = null;
   }
 
-  async function mergeApps(fromId: string, ontoId: string) {
-    await applyGrid(gridMergeApps(gridView(), fromId, ontoId));
+  async function saveEditedApp(app: AppItem) {
+    await applyGrid(gridUpdateApp(gridView(), app));
+    editingApp = null;
+    addOpen = false;
+  }
+
+  async function deleteApp(app: AppItem) {
+    await applyGrid(gridRemoveApp(gridView(), app.id));
+  }
+
+  async function deleteFolder(folder: FolderItem) {
+    await applyGrid(gridRemoveFolder(gridView(), folder.id));
+  }
+
+  async function mergeApps(fromId: string, ontoId: string, folderId: string) {
+    await applyGrid(gridMergeApps(gridView(), fromId, ontoId, folderId));
   }
 
   async function dropIntoFolder(appId: string, folderId: string) {
@@ -332,7 +351,9 @@
     const prev = ytab.settings;
     const filterChanged =
       JSON.stringify(prev.wallhavenPurity) !== JSON.stringify(settings.wallhavenPurity) ||
-      JSON.stringify(prev.wallhavenCategories) !== JSON.stringify(settings.wallhavenCategories);
+      JSON.stringify(prev.wallhavenCategories) !== JSON.stringify(settings.wallhavenCategories) ||
+      (prev.wallhavenSorting || 'toplist') !== (settings.wallhavenSorting || 'toplist') ||
+      JSON.stringify(prev.wallhavenTags ?? []) !== JSON.stringify(settings.wallhavenTags ?? []);
     await persist((p) => ({ ...p, settings }));
     if (filterChanged) {
       wallpaperPool.clear();
@@ -369,6 +390,7 @@
     pageIndex = 0;
     openFolder = null;
     addOpen = false;
+    editingApp = null;
     plainNotice('ok', '已重置');
   }
 </script>
@@ -398,7 +420,16 @@
             onOpenApp={openApp}
             onOpenFolder={openFolderItem}
             onPageChange={(i) => (pageIndex = i)}
-            onAdd={() => (addOpen = true)}
+            onAdd={() => {
+              editingApp = null;
+              addOpen = true;
+            }}
+            onEditApp={(app) => {
+              addOpen = false;
+              editingApp = app;
+            }}
+            onDeleteApp={deleteApp}
+            onDeleteFolder={deleteFolder}
             hitRoot={mainEl}
             dnd={{
               onMerge: mergeApps,
@@ -451,8 +482,17 @@
     <FirstRun settings={ytab.settings} onChoose={onFirstRun} />
   {/if}
 
-  {#if addOpen}
-    <AddAppDialog onSave={addApp} onCancel={() => (addOpen = false)} />
+  {#if addOpen || editingApp}
+    {#key editingApp?.id ?? 'new'}
+      <AddAppDialog
+        initial={editingApp}
+        onSave={editingApp ? saveEditedApp : addApp}
+        onCancel={() => {
+          addOpen = false;
+          editingApp = null;
+        }}
+      />
+    {/key}
   {/if}
 
   {#if settingsOpen}
@@ -479,6 +519,11 @@
       onRename={(name) => renameFolder(openFolder!.id, name)}
       onReorderChildren={reorderFolderChildren}
       onEjectAt={ejectFromFolderAt}
+      onEditApp={(app) => {
+        addOpen = false;
+        editingApp = app;
+      }}
+      onDeleteApp={deleteApp}
     />
   {/if}
   {/if}

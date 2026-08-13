@@ -10,7 +10,7 @@ export type IconSortDragOutcome =
   | { type: 'sessionStart' }
   | { type: 'sessionCancel' }
   | { type: 'reorder'; items: GridItem[] }
-  | { type: 'merge'; fromId: string; ontoId: string }
+  | { type: 'merge'; fromId: string; ontoId: string; folderId: string }
   | { type: 'intoFolder'; appId: string; folderId: string }
   | {
       type: 'pageFlip';

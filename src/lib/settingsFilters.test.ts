@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { purityAfterClearingKey, toggleCategory, togglePurity } from './settingsFilters';
+import { purityAfterClearingKey, isTurningOffLast, toggleCategory, togglePurity } from './settingsFilters';
 
 describe('togglePurity', () => {
   it('最后一项关不掉', () => {
@@ -28,6 +28,20 @@ describe('togglePurity', () => {
       sketchy: true,
       nsfw: false,
     });
+  });
+});
+
+describe('isTurningOffLast', () => {
+  it('只剩一项再关为 true', () => {
+    expect(isTurningOffLast({ sfw: true, sketchy: false, nsfw: false }, 'sfw', false)).toBe(true);
+  });
+
+  it('多项开着时关掉其中一项为 false', () => {
+    expect(isTurningOffLast({ sfw: true, sketchy: true, nsfw: false }, 'sfw', false)).toBe(false);
+  });
+
+  it('打开一项为 false', () => {
+    expect(isTurningOffLast({ sfw: true, sketchy: false, nsfw: false }, 'sketchy', true)).toBe(false);
   });
 });
 

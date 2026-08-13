@@ -77,7 +77,13 @@ export function addApp(view: AppGridView, app: AppItem): AppGridView {
   };
 }
 
-export function mergeApps(view: AppGridView, fromId: string, ontoId: string): AppGridView {
+/** 两颗 App 收进同一文件夹。`folderId` 由网格先占位再传入，松手才不会先闪回再替换。 */
+export function mergeApps(
+  view: AppGridView,
+  fromId: string,
+  ontoId: string,
+  folderId = newId(),
+): AppGridView {
   const all = flattenPages(view.pages);
   const fromIdx = all.findIndex((i) => i.id === fromId);
   const ontoIdx = all.findIndex((i) => i.id === ontoId);
@@ -90,7 +96,7 @@ export function mergeApps(view: AppGridView, fromId: string, ontoId: string): Ap
   }
 
   const folder: FolderItem = {
-    id: newId(),
+    id: folderId,
     kind: 'folder',
     name: '文件夹',
     children: [ontoItem, fromItem],
@@ -271,6 +277,57 @@ export function renameFolder(view: AppGridView, folderId: string, name: string):
     openFolder = { ...openFolder, name };
   }
   return { ...view, pages, openFolder };
+}
+
+/** 删除不把后页图标往前挤，只丢掉因此变空的页。 */
+function dropEmptyPages(pages: GridItem[][], pageIndex: number): Pick<AppGridView, 'pages' | 'pageIndex'> {
+  const next = pages.filter((p) => p.length > 0);
+  const pagesOut = next.length ? next : [[]];
+  return { pages: pagesOut, pageIndex: Math.min(pageIndex, pagesOut.length - 1) };
+}
+
+/** 按 id 改 App；文件夹内外和打开中的文件夹一起改。 */
+export function updateApp(view: AppGridView, app: AppItem): AppGridView {
+  const pages = view.pages.map((page) =>
+    page.map((item) => {
+      if (item.kind === 'app' && item.id === app.id) return app;
+      if (item.kind === 'folder') {
+        return { ...item, children: item.children.map((c) => (c.id === app.id ? app : c)) };
+      }
+      return item;
+    }),
+  );
+  let openFolder = view.openFolder;
+  if (openFolder) {
+    openFolder = { ...openFolder, children: openFolder.children.map((c) => (c.id === app.id ? app : c)) };
+  }
+  return { ...view, pages, openFolder };
+}
+
+/** 网格或文件夹内删除 App；删到只剩 1 个则拆文件夹。 */
+export function removeApp(view: AppGridView, appId: string): AppGridView {
+  const pages = view.pages.map((page) =>
+    page.flatMap((item) => {
+      if (item.kind === 'app') return item.id === appId ? [] : [item];
+      return collapseFolder(
+        item,
+        item.children.filter((c) => c.id !== appId),
+      );
+    }),
+  );
+  let openFolder = view.openFolder;
+  if (openFolder?.children.some((c) => c.id === appId)) {
+    const children = openFolder.children.filter((c) => c.id !== appId);
+    openFolder = children.length <= 1 ? null : { ...openFolder, children };
+  }
+  return { ...view, ...dropEmptyPages(pages, view.pageIndex), openFolder };
+}
+
+/** 删除文件夹，其中的 App 一并去掉。 */
+export function removeFolder(view: AppGridView, folderId: string): AppGridView {
+  const pages = view.pages.map((page) => page.filter((item) => item.id !== folderId));
+  const openFolder = view.openFolder?.id === folderId ? null : view.openFolder;
+  return { ...view, ...dropEmptyPages(pages, view.pageIndex), openFolder };
 }
 
 export function setPageIndex(view: AppGridView, pageIndex: number): AppGridView {

@@ -2,12 +2,14 @@
   import { tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import type { Settings } from '../lib/types';
+  import type { Settings, WallhavenSorting } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
   import { plainNotice } from '../lib/notice';
-  import { purityAfterClearingKey, toggleCategory, togglePurity } from '../lib/settingsFilters';
+  import { isTurningOffLast, purityAfterClearingKey, toggleCategory, togglePurity } from '../lib/settingsFilters';
   import { testWallhavenKey } from '../lib/wallhavenKey';
+  import { tagsAfterCategoriesChange, visibleTagPresets } from '../lib/wallpaper';
   import CapsuleSwitch from './CapsuleSwitch.svelte';
+  import CustomScroll from './CustomScroll.svelte';
   import FilePickButton from './FilePickButton.svelte';
   import GhostTip from './GhostTip.svelte';
   import KnobSwitch from './KnobSwitch.svelte';
@@ -28,6 +30,14 @@
   const SITE_LIVE = false;
   const SITE_URL = 'https://ytab.luoye.pro';
   const KEY_URL = 'https://wallhaven.cc/settings/account';
+  const SORTING_OPTIONS: { value: WallhavenSorting; label: string }[] = [
+    { value: 'random', label: '随机' },
+    { value: 'date_added', label: '最新' },
+    { value: 'relevance', label: '相关' },
+    { value: 'views', label: '浏览' },
+    { value: 'favorites', label: '收藏' },
+    { value: 'toplist', label: '热门' },
+  ];
 
   let {
     settings,
@@ -63,11 +73,12 @@
   let pill = $state({ top: 0, height: 0 });
   let pillSlide = $state(false);
   let revealKey = $state(false);
-  let keyOk = $state(false);
   let keyFlash = $state<'ok' | 'fail' | null>(null);
   let testBusy = $state(false);
 
-  const hasKey = $derived(settings.wallhavenApiKey.trim().length > 0);
+  const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
+  const keyOk = $derived(hasKey && settings.wallhavenKeyOk);
+  const tagPresets = $derived(visibleTagPresets(settings.wallhavenCategories));
 
   $effect(() => {
     if (!highlight) return;
@@ -116,11 +127,36 @@
     onChange({ ...settings, ...partial });
   }
 
+  function setPurity(key: 'sfw' | 'sketchy' | 'nsfw', on: boolean) {
+    if (isTurningOffLast(settings.wallhavenPurity, key, on)) {
+      plainNotice('fail', '纯度至少开一项');
+      return;
+    }
+    patch({ wallhavenPurity: togglePurity(settings.wallhavenPurity, key, on, hasKey) });
+  }
+
+  function setCategory(key: 'general' | 'anime' | 'people', on: boolean) {
+    if (isTurningOffLast(settings.wallhavenCategories, key, on)) {
+      plainNotice('fail', '分类至少开一项');
+      return;
+    }
+    const wallhavenCategories = toggleCategory(settings.wallhavenCategories, key, on);
+    patch({
+      wallhavenCategories,
+      wallhavenTags: tagsAfterCategoriesChange(settings.wallhavenTags ?? [], wallhavenCategories),
+    });
+  }
+
+  function setTag(id: string, on: boolean) {
+    const cur = settings.wallhavenTags ?? [];
+    const next = on ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((t) => t !== id);
+    patch({ wallhavenTags: next });
+  }
+
   function onKeyInput(value: string) {
-    keyOk = false;
     const nextHas = value.trim().length > 0;
     const purity = !nextHas ? purityAfterClearingKey(settings.wallhavenPurity) : settings.wallhavenPurity;
-    patch({ wallhavenApiKey: value, wallhavenPurity: purity });
+    patch({ wallhavenApiKey: value, wallhavenPurity: purity, wallhavenKeyOk: false });
   }
 
   async function testKey() {
@@ -130,14 +166,14 @@
     const result = await testWallhavenKey(settings.wallhavenApiKey);
     testBusy = false;
     if (result === 'ok') {
-      keyOk = true;
+      patch({ wallhavenKeyOk: true });
       keyFlash = 'ok';
       window.setTimeout(() => {
         if (keyFlash === 'ok') keyFlash = null;
       }, 800);
       return;
     }
-    keyOk = false;
+    patch({ wallhavenKeyOk: false });
     keyFlash = 'fail';
     plainNotice('fail', result === 'invalid' ? '密钥无效' : '网络出现异常 请稍后再试');
     window.setTimeout(() => {
@@ -195,6 +231,12 @@
   }
 </script>
 
+{#snippet helpMark(text: string)}
+  <GhostTip label={text} placement="se" wrap>
+    <button type="button" class="help" aria-label={text}>?</button>
+  </GhostTip>
+{/snippet}
+
 {#snippet globe()}
   <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
     <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" />
@@ -215,7 +257,7 @@
   transition:fade={{ duration: 180 }}
 >
   <button type="button" class="backdrop" aria-label="关闭设置" onclick={onClose}></button>
-  <div class="sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
+  <div class="sheet ios-sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
     <aside>
       <nav bind:this={navEl}>
         <div
@@ -271,13 +313,13 @@
       </header>
 
       <div class="pane">
-        {#key tab}
+        {#if tab === 'general'}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
-            {#if tab === 'general'}
-              <div class="block">
+            <CustomScroll>
+              <div class="block inline">
                 <div class="head">
                   <span id="lbl-open" class="title">打开方式</span>
-                  <span class="desc">只作用于起始页上的 App，搜索和页脚链接不走这项。</span>
+                  {@render helpMark('只作用于起始页上的 App，搜索和页脚链接不走这项。')}
                 </div>
                 <SegmentedControl
                   labelledBy="lbl-open"
@@ -289,10 +331,10 @@
                   onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
                 />
               </div>
-              <div class="block">
+              <div class="block inline">
                 <div class="head">
                   <span id="lbl-bing" class="title">Bing</span>
-                  <span class="desc">国内是 cn.bing.com，国际是 www.bing.com。</span>
+                  {@render helpMark('国内是 cn.bing.com，国际是 www.bing.com。')}
                 </div>
                 <SegmentedControl
                   labelledBy="lbl-bing"
@@ -304,10 +346,13 @@
                   onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
                 />
               </div>
-            {:else if tab === 'wallpaper'}
+            </CustomScroll>
+          </div>
+        {:else if tab === 'wallpaper'}
+          <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
+            <CustomScroll>
               <div class="block" class:glow={glow === 'apiKey'}>
-                <div class="head key-head">
-                  <span class="title">Wallhaven 密钥</span>
+                <div class="head">
                   {#if keyOk}
                     <span class="key-ok" transition:scale={{ duration: 220, start: 0.45 }} aria-hidden="true">
                       <svg viewBox="0 0 24 24" width="16" height="16">
@@ -322,28 +367,55 @@
                       </svg>
                     </span>
                   {/if}
+                  <span class="title">Wallhaven 密钥</span>
+                  {@render helpMark('提高请求限额；开限制必须填写。')}
                   <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
-                  <span class="desc">提高请求限额；开限制必须填写。</span>
                 </div>
                 <div class="key-row">
-                  <input
-                    bind:this={apiKeyEl}
+                  <div
+                    class="key-field"
                     class:flash-ok={keyFlash === 'ok'}
                     class:flash-fail={keyFlash === 'fail'}
-                    type={revealKey ? 'text' : 'password'}
-                    value={settings.wallhavenApiKey}
-                    placeholder="可选"
-                    autocomplete="off"
-                    oninput={(e) => onKeyInput((e.currentTarget as HTMLInputElement).value)}
-                  />
-                  <button
-                    type="button"
-                    class="ghost"
-                    onclick={() => (revealKey = !revealKey)}
-                    aria-label={revealKey ? '隐藏密钥' : '显示密钥'}
                   >
-                    {revealKey ? '隐藏' : '显示'}
-                  </button>
+                    <input
+                      bind:this={apiKeyEl}
+                      type={revealKey ? 'text' : 'password'}
+                      value={settings.wallhavenApiKey}
+                      placeholder="可选"
+                      autocomplete="off"
+                      oninput={(e) => onKeyInput((e.currentTarget as HTMLInputElement).value)}
+                    />
+                    <button
+                      type="button"
+                      class="eye"
+                      onclick={() => (revealKey = !revealKey)}
+                      aria-label={revealKey ? '隐藏密钥' : '显示密钥'}
+                    >
+                      {#if revealKey}
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            d="M3 3l18 18M9.9 4.2A9 9 0 0 1 12 4c5.2 0 9.5 3.4 11 8.5a12 12 0 0 1-1.8 2.8M6.1 6.1C4 7.6 2.4 9.6 1 12.5 2.5 17.6 6.8 21 12 21c1.7 0 3.3-.4 4.7-1"
+                          />
+                        </svg>
+                      {:else}
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            d="M1 12.5C2.5 7.4 6.8 4 12 4s9.5 3.4 11 8.5C21.5 17.6 17.2 21 12 21S2.5 17.6 1 12.5Z"
+                          />
+                          <circle cx="12" cy="12.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+                        </svg>
+                      {/if}
+                    </button>
+                  </div>
                   {#if hasKey}
                     <button type="button" class="action" disabled={testBusy} onclick={testKey}>测试</button>
                   {/if}
@@ -352,91 +424,116 @@
               <div class="block" class:glow={glow === 'filters'}>
                 <div class="head">
                   <span class="title">纯度</span>
-                  <span class="desc">至少开一项。没密钥时不能开限制。</span>
+                  {@render helpMark('至少开一项。没密钥时不能开限制。')}
                 </div>
-                <div class="caps">
+                <div class="caps fill">
                   <CapsuleSwitch
                     label="安全"
+                    tile
                     on={settings.wallhavenPurity.sfw}
-                    onChange={(on) =>
-                      patch({ wallhavenPurity: togglePurity(settings.wallhavenPurity, 'sfw', on, hasKey) })}
+                    onChange={(on) => setPurity('sfw', on)}
                   />
                   <CapsuleSwitch
                     label="擦边"
+                    tile
                     on={settings.wallhavenPurity.sketchy}
-                    onChange={(on) =>
-                      patch({
-                        wallhavenPurity: togglePurity(settings.wallhavenPurity, 'sketchy', on, hasKey),
-                      })}
+                    onChange={(on) => setPurity('sketchy', on)}
                   />
                   <CapsuleSwitch
                     label="限制"
+                    tile
                     on={settings.wallhavenPurity.nsfw}
                     disabled={!hasKey}
-                    onChange={(on) =>
-                      patch({ wallhavenPurity: togglePurity(settings.wallhavenPurity, 'nsfw', on, hasKey) })}
+                    onChange={(on) => setPurity('nsfw', on)}
                   />
                 </div>
               </div>
               <div class="block" class:glow={glow === 'filters'}>
                 <div class="head">
                   <span class="title">分类</span>
-                  <span class="desc">至少开一项。</span>
+                  {@render helpMark('至少开一项。')}
                 </div>
-                <div class="caps">
+                <div class="caps fill">
                   <CapsuleSwitch
                     label="常规"
+                    tile
                     on={settings.wallhavenCategories.general}
-                    onChange={(on) =>
-                      patch({
-                        wallhavenCategories: toggleCategory(settings.wallhavenCategories, 'general', on),
-                      })}
+                    onChange={(on) => setCategory('general', on)}
                   />
                   <CapsuleSwitch
                     label="动漫"
+                    tile
                     on={settings.wallhavenCategories.anime}
-                    onChange={(on) =>
-                      patch({
-                        wallhavenCategories: toggleCategory(settings.wallhavenCategories, 'anime', on),
-                      })}
+                    onChange={(on) => setCategory('anime', on)}
                   />
                   <CapsuleSwitch
                     label="人物"
+                    tile
                     on={settings.wallhavenCategories.people}
-                    onChange={(on) =>
-                      patch({
-                        wallhavenCategories: toggleCategory(settings.wallhavenCategories, 'people', on),
-                      })}
+                    onChange={(on) => setCategory('people', on)}
                   />
                 </div>
               </div>
-            {:else if tab === 'data'}
+              <div class="block inline">
+                <div class="head">
+                  <span id="wallpaper-sorting" class="title">排序</span>
+                  {@render helpMark('热门按近一个月。有标签时相关更准。')}
+                </div>
+                <SegmentedControl
+                  labelledBy="wallpaper-sorting"
+                  value={settings.wallhavenSorting || 'toplist'}
+                  options={SORTING_OPTIONS}
+                  fill
+                  onChange={(v) => patch({ wallhavenSorting: v as WallhavenSorting })}
+                />
+              </div>
               <div class="block">
                 <div class="head">
+                  <span class="title">标签</span>
+                  {@render helpMark('可选。跟着上面的分类换；多选一起搜；全关则不限。')}
+                </div>
+                <div class="caps fill">
+                  {#each tagPresets as tag (tag.id)}
+                    <CapsuleSwitch
+                      label={tag.label}
+                      tile
+                      on={(settings.wallhavenTags ?? []).includes(tag.id)}
+                      onChange={(on) => setTag(tag.id, on)}
+                    />
+                  {/each}
+                </div>
+              </div>
+            </CustomScroll>
+          </div>
+        {:else}
+          <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
+            <CustomScroll>
+              <div class="block inline">
+                <div class="head">
                   <span class="title">导出</span>
-                  <span class="desc">导出为 .ytab。图标和密钥在下一步选。</span>
+                  {@render helpMark('导出为 .ytab。图标和密钥在下一步选。')}
                 </div>
                 <button type="button" class="action" disabled={exportBusy} onclick={() => (sheet = 'export')}>
                   {exportBusy ? '导出中…' : '导出'}
                 </button>
               </div>
-              <div class="block">
+              <div class="block inline">
                 <div class="head">
                   <span class="title">导入</span>
-                  <span class="desc">从 .ytab 恢复，会整份替换当前数据。</span>
+                  {@render helpMark('从 .ytab 恢复，会整份替换当前数据。')}
                 </div>
                 <FilePickButton label="选择文件" accept=".ytab,application/zip" onFile={onImportPicked} />
               </div>
-              <div class="block">
+              <div class="block inline">
                 <div class="head">
                   <span class="title">重置</span>
-                  <span class="desc">清除全部本地数据并回到首次启动，不可撤销。</span>
+                  {@render helpMark('清除全部本地数据并回到首次启动，不可撤销。')}
                 </div>
                 <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置所有数据</button>
               </div>
-            {/if}
+            </CustomScroll>
           </div>
-        {/key}
+        {/if}
       </div>
     </section>
 
@@ -515,7 +612,6 @@
     background: rgba(28, 28, 32, 0.52);
     backdrop-filter: blur(28px) saturate(1.25);
     color: #f5f5f7;
-    border-radius: 14px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
@@ -523,6 +619,7 @@
   }
   aside {
     position: relative;
+    z-index: 2;
     background: rgba(0, 0, 0, 0.25);
     display: flex;
     flex-direction: column;
@@ -575,7 +672,7 @@
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     margin-top: auto;
-    padding: 0.4rem 0.45rem 0.5rem;
+    padding: 0.45rem 0.6rem 0.7rem;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
   }
   .foot-start {
@@ -620,7 +717,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    padding: 0.45rem 0.65rem 0.15rem;
+    padding: 0.55rem 0.9rem 0.15rem;
   }
   .close {
     appearance: none;
@@ -640,15 +737,11 @@
     flex: 1;
     min-height: 0;
     position: relative;
+    overflow: hidden;
   }
   .body {
     position: absolute;
     inset: 0;
-    padding: 0.35rem 1rem 1rem;
-    overflow: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.7rem;
   }
   .block {
     display: flex;
@@ -658,29 +751,54 @@
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.05);
   }
+  .block.inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .block.inline .head {
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+  }
+  .block.inline .action,
+  .block.inline .danger {
+    align-self: center;
+    flex-shrink: 0;
+  }
   .head {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.3rem 0.5rem;
+    align-items: center;
+    gap: 0.22rem 0.5rem;
   }
   .title {
     font-weight: 600;
   }
-  .desc {
-    opacity: 0.55;
-    font-size: 0.78rem;
-    flex: 1;
-    min-width: 8rem;
+  .help {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.48);
+    font: inherit;
+    font-size: 0.68rem;
+    line-height: 1;
+    cursor: help;
+  }
+  .help:hover {
+    color: rgba(255, 255, 255, 0.88);
+    border-color: rgba(255, 255, 255, 0.5);
   }
   .get {
     margin-left: auto;
     color: #7ecbff;
     text-decoration: none;
     font-size: 0.8rem;
-  }
-  .key-head .desc {
-    flex-basis: 100%;
   }
   .get:hover {
     text-decoration: underline;
@@ -695,33 +813,65 @@
     flex-wrap: wrap;
     gap: 0.45rem;
   }
+  .caps.fill {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.4rem;
+  }
   .key-row {
     display: flex;
     align-items: center;
     gap: 0.4rem;
   }
-  .key-row input {
+  .key-field {
+    position: relative;
     flex: 1;
     min-width: 0;
+  }
+  .key-field input {
+    width: 100%;
+    box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(0, 0, 0, 0.25);
     color: inherit;
     border-radius: 8px;
-    padding: 0.45rem 0.65rem;
+    padding: 0.45rem 2.1rem 0.45rem 0.65rem;
     font: inherit;
     outline: none;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  .key-row input:focus {
+  .key-field input:focus {
     border-color: rgba(126, 203, 255, 0.55);
   }
-  .key-row input.flash-ok {
+  .key-field.flash-ok input {
     border-color: #34c759;
     box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.35);
   }
-  .key-row input.flash-fail {
-    border-color: #ff3b30;
+  .key-field.flash-fail {
     animation: shake 0.4s ease;
+  }
+  .key-field.flash-fail input {
+    border-color: #ff3b30;
+  }
+  .eye {
+    appearance: none;
+    position: absolute;
+    right: 0.28rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.42);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+  .eye:hover {
+    color: rgba(255, 255, 255, 0.9);
   }
   .action,
   .danger,

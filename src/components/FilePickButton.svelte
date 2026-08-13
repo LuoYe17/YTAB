@@ -31,7 +31,6 @@
 <style>
   .box {
     position: relative;
-    align-self: flex-start;
   }
   .pick {
     appearance: none;

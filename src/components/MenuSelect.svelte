@@ -127,7 +127,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.6rem;
-    min-width: 11.5rem;
+    min-width: 7.5rem;
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: rgba(0, 0, 0, 0.28);
     color: inherit;
@@ -142,7 +142,7 @@
   }
   .trigger:hover,
   .trigger[aria-expanded='true'] {
-    border-color: rgba(126, 203, 255, 0.45);
+    border-color: rgba(255, 255, 255, 0.28);
     background: rgba(0, 0, 0, 0.38);
   }
   .chev {
@@ -187,7 +187,7 @@
     background: rgba(255, 255, 255, 0.1);
   }
   .opt.on {
-    background: rgba(126, 203, 255, 0.22);
+    background: rgba(255, 255, 255, 0.16);
   }
   @keyframes menu-in {
     from {

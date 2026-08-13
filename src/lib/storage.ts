@@ -1,7 +1,7 @@
 /** 持久化：chrome.storage 只放小 meta；壁纸与 App 图标像素在 IndexedDB。 */
 
 import { storage } from 'wxt/utils/storage';
-import { createEmptyState, type YtabState } from './types';
+import { createEmptyState, mergeSettings, type YtabState } from './types';
 import {
   IDB_ICON_PREFIX,
   collectAppIds,
@@ -154,6 +154,7 @@ async function writeNow(state: YtabState): Promise<void> {
 export async function loadState(): Promise<YtabState> {
   const value = await ytabStore.getValue();
   const state = value ?? createEmptyState();
+  state.settings = mergeSettings(state.settings);
 
   let imageUrl = '';
   try {

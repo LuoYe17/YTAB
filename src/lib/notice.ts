@@ -29,7 +29,7 @@ export function subscribeNotice(fn: (n: Notice | null) => void): () => void {
   };
 }
 
-/** 砸下一条新通知；已有的会被顶掉（宿主先右溜再入）。 */
+/** 滑入一条新通知；已有的会被顶掉（宿主先右溜再从左边入）。 */
 export function showNotice(input: Omit<Notice, 'id'>): void {
   seq += 1;
   current = { ...input, id: seq };

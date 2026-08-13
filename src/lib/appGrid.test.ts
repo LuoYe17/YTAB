@@ -7,7 +7,10 @@ import {
   ejectFromFolderAt,
   mergeApps,
   openFolderItem,
+  removeApp,
+  removeFolder,
   reorderFolderChildren,
+  updateApp,
 } from './appGrid';
 import type { AppItem, FolderItem } from './types';
 
@@ -24,12 +27,13 @@ describe('appGrid', () => {
     const a = app('a');
     const b = app('b');
     const view = createAppGridView([[a, b]]);
-    const next = mergeApps(view, 'a', 'b');
+    const next = mergeApps(view, 'a', 'b', 'folder-1');
     expect(next.pages).toHaveLength(1);
     expect(next.pages[0]).toHaveLength(1);
     const f = next.pages[0]![0]!;
     expect(f.kind).toBe('folder');
     if (f.kind !== 'folder') return;
+    expect(f.id).toBe('folder-1');
     expect(f.children.map((c) => c.id)).toEqual(['b', 'a']);
     expect(next.dragSnapshot).toBeNull();
   });
@@ -69,6 +73,52 @@ describe('appGrid', () => {
     expect(ids).toContain('b');
     expect(ids).toContain('c');
     expect(ids.indexOf('a')).toBe(1);
+  });
+
+  it('编辑 App 保留 id，文件夹内外都能改', () => {
+    const a = app('a', '旧');
+    const b = app('b');
+    const f = folder('f', [a, b]);
+    const view = { ...createAppGridView([[f]]), openFolder: f };
+    const next = updateApp(view, { ...a, name: '新' });
+    const folderItem = next.pages[0]![0]!;
+    expect(folderItem.kind).toBe('folder');
+    if (folderItem.kind !== 'folder') return;
+    expect(folderItem.children[0]).toMatchObject({ id: 'a', name: '新' });
+    expect(next.openFolder?.children[0]?.name).toBe('新');
+  });
+
+  it('删除网格上的 App，不把后页往前挤', () => {
+    const page0 = Array.from({ length: 2 }, (_, i) => app(`p0-${i}`));
+    const page1 = [app('keep')];
+    const next = removeApp(createAppGridView([page0, page1], 0), 'p0-0');
+    expect(next.pages).toHaveLength(2);
+    expect(next.pages[0]!.map((i) => i.id)).toEqual(['p0-1']);
+    expect(next.pages[1]!.map((i) => i.id)).toEqual(['keep']);
+  });
+
+  it('删空当前页则丢掉空页并夹住页码', () => {
+    const next = removeApp(createAppGridView([[app('a')], [app('b')]], 0), 'a');
+    expect(next.pages).toHaveLength(1);
+    expect(next.pages[0]!.map((i) => i.id)).toEqual(['b']);
+    expect(next.pageIndex).toBe(0);
+  });
+
+  it('删除文件夹内 App：剩 1 个则拆开并关窗', () => {
+    const a = app('a');
+    const b = app('b');
+    const f = folder('f', [a, b]);
+    const view = { ...createAppGridView([[f]]), openFolder: f };
+    const next = removeApp(view, 'a');
+    expect(next.pages[0]).toEqual([b]);
+    expect(next.openFolder).toBeNull();
+  });
+
+  it('删除文件夹连同其中 App', () => {
+    const f = folder('f', [app('a'), app('b')]);
+    const next = removeFolder({ ...createAppGridView([[f, app('c')]]), openFolder: f }, 'f');
+    expect(next.pages[0]!.map((i) => i.id)).toEqual(['c']);
+    expect(next.openFolder).toBeNull();
   });
 
   it('Esc 回滚拖拽快照', () => {

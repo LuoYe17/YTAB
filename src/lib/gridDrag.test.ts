@@ -95,6 +95,8 @@ type HarnessOptions = {
   /** 文件夹壳矩形；给了才有「拖出关窗」 */
   outsideRect?: HitBand | null;
   pageDrop?: PageDropTarget | null;
+  /** 传 null 模拟量不到网格（拖拽中理论上不会发生） */
+  metrics?: GridMetrics | null;
 };
 
 function harness(options: HarnessOptions = {}) {
@@ -117,7 +119,7 @@ function harness(options: HarnessOptions = {}) {
       pageIndex: options.pageIndex ?? 0,
       pageCount: options.pageCount ?? 1,
     }),
-    readMetrics: () => METRICS,
+    readMetrics: () => (options.metrics === undefined ? METRICS : options.metrics),
     readHitBand: () => BAND,
     readOutsideRect: () => options.outsideRect ?? null,
     readPageDropTarget: () => options.pageDrop ?? null,
@@ -381,6 +383,42 @@ describe('会话生命周期', () => {
     dropped.session.start('a');
     dropped.session.end(false);
     expect(dropped.types()).toEqual(['beginDrag', 'endDrag']);
+  });
+
+  it('停够了但源或目标已经没了，仍要发 endDrag 收尾', () => {
+    const items: GridItem[] = [app('a'), app('b')];
+    const h = harness({ items });
+    h.session.start('a');
+    h.session.move(150, 50);
+    h.clock.advance(MERGE_DWELL_MS);
+    expect(h.visuals.mergeReady).toBe(true);
+
+    // 拖着的时候那两颗被别处换掉了（例如设置里重置）
+    items.splice(0, items.length, app('c'));
+    h.session.end(false);
+
+    // 不发事件的话 dragSnapshot 会一直挂着，之后再也不 persist
+    expect(h.types().at(-1)).toBe('endDrag');
+  });
+
+  it('文件夹内到了屏幕边缘也不翻页', () => {
+    const h = harness({ scope: 'folder', pageIndex: 0, pageCount: 3 });
+    h.session.start('a');
+    h.session.move(VIEWPORT_WIDTH - 10, 50);
+    h.clock.advance(PAGE_FLIP_DWELL_MS);
+
+    expect(h.types()).not.toContain('pageFlip');
+    expect(h.visuals.edgeSide).toBeNull();
+  });
+
+  it('量不到网格就什么都不判定', () => {
+    const h = harness({ metrics: null });
+    h.session.start('a');
+    h.session.move(150, 50);
+    h.clock.advance(MERGE_DWELL_MS * 2);
+
+    expect(h.types()).toEqual(['beginDrag']);
+    expect(h.visuals.dwellTargetId).toBeNull();
   });
 
   it('松手与卸载后迟到的定时器不再开火', () => {

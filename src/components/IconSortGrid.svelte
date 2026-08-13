@@ -115,8 +115,12 @@
     return { x: 0, y: 0 };
   }
 
+  // 只记坐标：判定跟着 dnd-kit 的节拍走，别让每个原生 pointermove 都去量一次网格。
   function onPointerTrack(e: PointerEvent) {
-    track(e.clientX, e.clientY);
+    if (e.clientX || e.clientY) {
+      lastX = e.clientX;
+      lastY = e.clientY;
+    }
   }
 
   function onDragStart(event: { operation: { source?: { id: string | number } | null } }) {

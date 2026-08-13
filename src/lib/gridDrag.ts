@@ -258,6 +258,8 @@ export function createGridDragSession<S extends Scope>(deps: GridDragDeps<S>): G
 
   /** @returns true 若指针在翻页热区（并处理计时） */
   function tryPageEdge(): boolean {
+    // 文件夹内没有翻页；靠 scope 挡住，不靠调用方恰好没传 pageCount。
+    if (deps.scope !== 'page') return false;
     const { pageIndex, pageCount } = deps.getPaging();
     if (!activeId || pageCount <= 1) {
       clearEdgePending();
@@ -456,7 +458,8 @@ export function createGridDragSession<S extends Scope>(deps: GridDragDeps<S>): G
       activeId = null;
       pushVisuals();
 
-      if (wasOutside) {
+      // 拖出关窗只发生在文件夹内；主网格没有壳可拖出，也不该发 eject。
+      if (wasOutside && deps.scope === 'folder') {
         // 没有 sourceId 就无法 eject，只能 cancel，否则 beginDrag 留下的快照清不掉。
         if (canceled || !sourceId) {
           emit({ type: 'cancelDrag' });

@@ -182,7 +182,8 @@
       return next;
     });
     grid = createAppGridView(paginate(result.apps), 0);
-    if (result.wallpaper) wallpaper.adopt(result.wallpaper, ytab.settings);
+    // 没拿到图也要备池：这一开页后面还要「换一张」。
+    wallpaper.adopt(result.wallpaper, ytab.settings);
     const session = await loadSession();
     if (needsFirstPassphrase(session)) needPass = true;
   }
@@ -212,22 +213,27 @@
     if (invalidatePool) wallpaper.onFiltersChanged(settings);
   }
 
-  async function landImported(applied: ReturnType<typeof applyImportedState>) {
-    await persist(() => applied.state);
-    wallpaper.adopt(applied.state.wallpaper, applied.state.settings);
+  /** 整份换掉：落盘、关设置、重建网格。壁纸怎么接由调用方决定。 */
+  async function landState(next: YtabState) {
+    await persist(() => next);
     settingsOpen = false;
     settingsHighlight = null;
-    grid = createAppGridView(applied.state.pages, 0);
+    grid = createAppGridView(next.pages, 0);
   }
 
   async function onImportState(next: YtabState) {
-    await landImported(applyImportedState(next));
+    const { state } = applyImportedState(next);
+    await landState(state);
+    wallpaper.adopt(state.wallpaper, state.settings);
   }
 
   async function onResetAll() {
     await clearSession();
     needPass = false;
-    await landImported(applyImportedState(createEmptyState(), { endFirstRun: false }));
+    const { state } = applyImportedState(createEmptyState(), { endFirstRun: false });
+    await landState(state);
+    // 重置后人在首次启动界面，不该在后台替他拉壁纸。
+    wallpaper.forget();
     addOpen = false;
     editingApp = null;
     plainNotice('ok', '已重置');

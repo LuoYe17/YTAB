@@ -227,10 +227,6 @@ class WallpaperPool {
     return this.items.shift() ?? null;
   }
 
-  size(): number {
-    return this.items.length;
-  }
-
   async fill(settings: Settings, target = POOL_SIZE): Promise<void> {
     this.invalidateIfNewDay();
     // Wait out an in-flight fill (clear() bumps epoch so it exits); then start fresh.
@@ -456,13 +452,22 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
 
     /**
      * 外面已经拿到一张（首次启动 / 导入）：上屏并接管后续预取。
-     * 整份状态由调用方落盘，这里不重复写。
+     * 整份状态由调用方落盘，这里不重复写。传 null 表示那边没拿到图，
+     * 上屏不动，但池子照样备起来。
      */
-    adopt(item: { imageUrl: string; wallhavenId?: string }, settings: Settings): void {
+    adopt(item: { imageUrl: string; wallhavenId?: string } | null, settings: Settings): void {
       pool.clear();
-      deps.onDisplay(item.imageUrl);
-      pool.rememberCurrent(item.wallhavenId);
+      if (item) {
+        deps.onDisplay(item.imageUrl);
+        pool.rememberCurrent(item.wallhavenId);
+      }
       refill(settings);
+    },
+
+    /** 重置本机：清空上屏与旧池，且不补池——用户这会儿在首次启动界面。 */
+    forget(): void {
+      pool.clear();
+      deps.onDisplay('');
     },
   };
 }

@@ -7,6 +7,7 @@
  */
 
 import { resolveAppIcon } from './appIcons';
+import { realClock, type Clock } from './clock';
 import { createAppFromUrl, hostnameFallback, normalizeUrl, urlReadyToFetch } from './defaults';
 import type { AppItem } from './types';
 
@@ -20,18 +21,6 @@ export const MIN_SCAN_MS = 700;
 export const SUCCESS_HOLD_MS = 650;
 
 const ICON_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
-
-export type Clock = {
-  now(): number;
-  setTimeout(fn: () => void, ms: number): number;
-  clearTimeout(id: number): void;
-};
-
-const realClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (fn, ms) => window.setTimeout(fn, ms),
-  clearTimeout: (id) => window.clearTimeout(id),
-};
 
 export type AppDraftPhase = 'idle' | 'scan' | 'success';
 

@@ -6,8 +6,8 @@ import {
   SUCCESS_HOLD_MS,
   createAppDraft,
   type AppDraftSnapshot,
-  type Clock,
 } from './appDraft';
+import type { Clock } from './clock';
 import type { AppItem } from './types';
 
 function existing(): AppItem {

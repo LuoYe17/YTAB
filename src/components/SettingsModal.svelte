@@ -98,14 +98,13 @@
 
   $effect(() => {
     // 这里要画头像，缺了就顺手补一次；其余读会话的地方不该因此写盘。
-    void loadSession()
-      .then((s) => {
-        session = s;
-        return ensureAvatar(s);
-      })
-      .then((s) => {
-        session = s;
-      });
+    void (async () => {
+      const read = await loadSession();
+      session = read;
+      const withAvatar = await ensureAvatar(read);
+      // 补头像要走网络，回来时用户可能已经登出或换了账号。
+      if (session === read) session = withAvatar;
+    })();
   });
 
   $effect(() => {

@@ -33,12 +33,19 @@ export async function loadSession(): Promise<AccountSession | null> {
 /**
  * 补上缺失的头像并写回，供要显示头像的地方调用。
  * 与 `loadSession` 分开：读一份登录不该顺带落盘。
+ *
+ * 抓头像要走网络，期间用户可能已经登出或换了账号。写回前重读一次，对不上就
+ * 交出盘上那份——否则会把含 token / rawKey 的旧会话复活，`clearSession` 白做。
  */
 export async function ensureAvatar(session: AccountSession | null): Promise<AccountSession | null> {
   if (!session || session.avatar) return session;
   const avatar = await cacheAvatar(githubAvatarUrl(session.userId));
   if (!avatar) return session;
-  const next = { ...session, avatar };
+  const current = (await store.getValue()) ?? null;
+  if (!current || current.userId !== session.userId || current.token !== session.token) {
+    return current;
+  }
+  const next = { ...current, avatar };
   await store.setValue(next);
   return next;
 }

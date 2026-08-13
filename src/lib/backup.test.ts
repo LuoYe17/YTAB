@@ -68,7 +68,7 @@ describe('exportYtab', () => {
     }
   });
 
-  it('密钥随整份打包：出门前会被加密，云端只见密文', async () => {
+  it('密钥留在包里，不在这一层剥掉（加密发生在 accountBackup）', async () => {
     const blob = await exportYtab({
       ...createEmptyState(),
       settings: {

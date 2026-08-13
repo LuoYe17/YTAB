@@ -31,23 +31,35 @@ export async function loadSession(): Promise<AccountSession | null> {
 }
 
 /**
+ * 只改几个字段并写回，写前重读一次确认还是同一份登录。
+ *
+ * 慢活（抓头像、上传备份）回来时用户可能已经登出或换了账号；整份覆盖会把含
+ * token / rawKey 的旧会话复活，`clearSession` 就白做了。
+ *
+ * @returns 写回后的会话；已经不是同一份则返回盘上那份（可能为 null）。
+ */
+export async function patchSession(
+  expect: AccountSession,
+  partial: Partial<AccountSession>,
+): Promise<AccountSession | null> {
+  const current = (await store.getValue()) ?? null;
+  if (!current || current.userId !== expect.userId || current.token !== expect.token) {
+    return current;
+  }
+  const next = { ...current, ...partial };
+  await store.setValue(next);
+  return next;
+}
+
+/**
  * 补上缺失的头像并写回，供要显示头像的地方调用。
  * 与 `loadSession` 分开：读一份登录不该顺带落盘。
- *
- * 抓头像要走网络，期间用户可能已经登出或换了账号。写回前重读一次，对不上就
- * 交出盘上那份——否则会把含 token / rawKey 的旧会话复活，`clearSession` 白做。
  */
 export async function ensureAvatar(session: AccountSession | null): Promise<AccountSession | null> {
   if (!session || session.avatar) return session;
   const avatar = await cacheAvatar(githubAvatarUrl(session.userId));
   if (!avatar) return session;
-  const current = (await store.getValue()) ?? null;
-  if (!current || current.userId !== session.userId || current.token !== session.token) {
-    return current;
-  }
-  const next = { ...current, avatar };
-  await store.setValue(next);
-  return next;
+  return patchSession(session, { avatar });
 }
 
 function githubAvatarUrl(userId: string): string {

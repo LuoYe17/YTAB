@@ -3,6 +3,7 @@ import {
   ensureAvatar,
   loadSession,
   needsFirstPassphrase,
+  patchSession,
   sessionUnlocked,
   type AccountSession,
 } from './accountSession';
@@ -100,6 +101,26 @@ describe('ensureAvatar', () => {
 
     expect(await ensureAvatar(before)).toEqual(other);
     expect(stored.value).toBe(other);
+  });
+
+  it('只补指定字段，不把慢活开始时那份整个盖回去', async () => {
+    const before = session({ rawKey: 'k' });
+    stored.value = before;
+    // 上传期间别处补上了头像
+    stored.value = { ...before, avatar: 'https://cdn.example.com/me.png' };
+
+    const next = await patchSession(before, { hasBackup: true, uploadedAt: '2026-08-13T00:00:00Z' });
+    expect(next?.avatar).toBe('https://cdn.example.com/me.png');
+    expect(next?.hasBackup).toBe(true);
+    expect(stored.value?.avatar).toBe('https://cdn.example.com/me.png');
+  });
+
+  it('上传期间登出了就不写回', async () => {
+    const before = session({ rawKey: 'k' });
+    stored.value = null;
+
+    expect(await patchSession(before, { hasBackup: true })).toBeNull();
+    expect(stored.value).toBeNull();
   });
 
   it('loadSession 是纯读，不碰盘上的内容', async () => {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import GhostTip from './GhostTip.svelte';
+  import './effects.css';
   import type { WallpaperPrepareResult } from '../lib/wallpaper';
   import { wallpaperFailHint, type WallpaperFailHint } from '../lib/wallpaperFail';
 
@@ -162,7 +163,7 @@
     transform-origin: 32px 32px;
   }
   .glyph.show .faceid-arc {
-    animation: faceid-spin 0.9s linear infinite;
+    animation: fx-faceid-spin 0.9s linear infinite;
   }
   .success-ring,
   .fail-ring {
@@ -179,7 +180,7 @@
   }
   .glyph.show .success-ring,
   .glyph.show .fail-ring {
-    animation: ring-draw 0.42s ease forwards;
+    animation: fx-ring-draw 0.42s ease forwards;
   }
   .success-check,
   .fail-x {
@@ -188,22 +189,7 @@
   }
   .glyph.show .success-check,
   .glyph.show .fail-x {
-    animation: check-draw 0.32s 0.12s ease forwards;
-  }
-  @keyframes faceid-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes ring-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
-  }
-  @keyframes check-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
+    animation: fx-check-draw 0.32s 0.12s ease forwards;
   }
   @keyframes fail-shake {
     0%,

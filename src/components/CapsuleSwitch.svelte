@@ -1,4 +1,6 @@
 <script lang="ts">
+  import './effects.css';
+
   let {
     on = false,
     label,
@@ -144,21 +146,11 @@
     stroke-width: 3;
     stroke-dasharray: 140;
     stroke-dashoffset: 140;
-    animation: ring-draw 0.42s ease forwards;
+    animation: fx-ring-draw 0.42s ease forwards;
   }
   .check {
     stroke-dasharray: 36;
     stroke-dashoffset: 36;
-    animation: check-draw 0.32s 0.12s ease forwards;
-  }
-  @keyframes ring-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
-  }
-  @keyframes check-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
+    animation: fx-check-draw 0.32s 0.12s ease forwards;
   }
 </style>

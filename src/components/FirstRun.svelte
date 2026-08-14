@@ -18,6 +18,7 @@
   import { passphraseOk } from '../lib/accountCrypto';
   import { plainNotice } from '../lib/notice';
   import { saveSession, sessionFromAuth, type AccountSession } from '../lib/accountSession';
+  import './effects.css';
 
   let {
     settings,
@@ -830,11 +831,11 @@
     stroke-linecap: round;
     stroke-dasharray: 42 96;
     transform-origin: 32px 32px;
-    animation: faceid-spin 0.9s linear infinite;
+    animation: fx-faceid-spin 0.9s linear infinite;
   }
 
   .faceid-mark {
-    animation: faceid-pulse 0.9s ease-in-out infinite;
+    animation: fx-faceid-pulse 0.9s ease-in-out infinite;
   }
 
   .success-ring {
@@ -843,40 +844,12 @@
     stroke-width: 3;
     stroke-dasharray: 140;
     stroke-dashoffset: 140;
-    animation: ring-draw 0.42s ease forwards;
+    animation: fx-ring-draw 0.42s ease forwards;
   }
 
   .success-check {
     stroke-dasharray: 36;
     stroke-dashoffset: 36;
-    animation: check-draw 0.32s 0.18s ease forwards;
-  }
-
-  @keyframes faceid-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  @keyframes faceid-pulse {
-    0%,
-    100% {
-      opacity: 0.55;
-    }
-    50% {
-      opacity: 1;
-    }
-  }
-
-  @keyframes ring-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
-  }
-
-  @keyframes check-draw {
-    to {
-      stroke-dashoffset: 0;
-    }
+    animation: fx-check-draw 0.32s 0.18s ease forwards;
   }
 </style>

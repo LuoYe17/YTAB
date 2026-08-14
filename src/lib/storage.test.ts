@@ -1,93 +1,262 @@
-import { describe, expect, it, vi } from 'vitest';
-import { META_ICON_PREFIX } from './iconPersist';
-import { persistPlan, saveState } from './storage';
-import { createEmptyState, type AppItem, type FolderItem } from './types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { faviconUrlFor } from './defaults';
+import { META_ICON_PREFIX, iconIdbKey } from './iconPersist';
+import { createPersist, type KvStore, type MetaStore } from './storage';
+import { createEmptyState, type AppItem, type FolderItem, type GridItem, type YtabState } from './types';
 
-const { setMetaValue } = vi.hoisted(() => ({
-  setMetaValue: vi.fn(async () => {}),
-}));
+const DATA_A = 'data:image/png;base64,aaa';
+const DATA_B = 'data:image/png;base64,bbb';
+const HTTP_ICON = 'https://example.com/c.png';
+const WALLPAPER = 'data:image/jpeg;base64,wp';
 
-// persistPlan 与 chrome.storage 同模块；defineItem 会摸 runtime，纯顺序测试不需要。
-vi.mock('wxt/utils/storage', () => ({
-  storage: {
-    defineItem: () => ({
-      getValue: async () => null,
-      setValue: setMetaValue,
-    }),
-  },
-}));
-
-function app(id: string, icon: string): AppItem {
-  return { id, kind: 'app', name: id, url: `https://example.com/${id}`, icon };
+function app(id: string, icon = '', url = `https://example.com/${id}`): AppItem {
+  return { id, kind: 'app', name: id, url, icon };
 }
 
 function folder(id: string, children: AppItem[]): FolderItem {
   return { id, kind: 'folder', name: '文件夹', children };
 }
 
-describe('persistPlan', () => {
-  it('顺序：壁纸像素 → 每个 data: 图标 → meta；meta 清壁纸、data: 改 idb:', () => {
-    const dataA = 'data:image/png;base64,aaa';
-    const dataB = 'data:image/png;base64,bbb';
-    const http = 'https://example.com/c.png';
-    const wp = 'data:image/jpeg;base64,wp';
-    const steps = persistPlan({
-      ...createEmptyState(),
-      pages: [[app('a', dataA), folder('f', [app('b', dataB), app('c', http)])]],
-      wallpaper: { imageUrl: wp, fetchedOn: '2026-01-01', wallhavenId: 'w' },
-    });
+function stateOf(items: GridItem[], imageUrl = ''): YtabState {
+  return {
+    ...createEmptyState(),
+    pages: [items],
+    wallpaper: { imageUrl, fetchedOn: '2026-01-01', wallhavenId: 'w' },
+  };
+}
 
-    expect(steps.map((s) => s.kind)).toEqual(['wallpaper', 'icon', 'icon', 'meta']);
-    expect(steps[0]).toEqual({ kind: 'wallpaper', imageUrl: wp });
-    expect(steps[1]).toEqual({ kind: 'icon', id: 'a', data: dataA });
-    expect(steps[2]).toEqual({ kind: 'icon', id: 'b', data: dataB });
+/** 内存 adapter；`calls` 记录写入序列，`fail` 可中途开关以模拟介质出问题。 */
+function memPersist(seed: { meta?: YtabState; legacy?: string } = {}) {
+  const calls: string[] = [];
+  const batches: { entries: Map<string, string>; deleteKeys: string[] }[] = [];
+  const kvMap = new Map<string, string>();
+  const fail = { kvSet: false, writeBatch: false, kvRead: false };
+  let metaValue: YtabState | null = seed.meta ? structuredClone(seed.meta) : null;
+  let legacy = seed.legacy ?? '';
 
-    const metaStep = steps[3];
-    expect(metaStep?.kind).toBe('meta');
-    if (metaStep?.kind !== 'meta') return;
-    expect(metaStep.meta.wallpaper.imageUrl).toBe('');
-    expect(metaStep.meta.wallpaper.fetchedOn).toBe('2026-01-01');
-    expect(metaStep.meta.pages[0]![0]).toMatchObject({ id: 'a', icon: `${META_ICON_PREFIX}a` });
-    const f = metaStep.meta.pages[0]![1];
-    expect(f?.kind).toBe('folder');
-    if (f?.kind !== 'folder') return;
-    expect(f.children[0]?.icon).toBe(`${META_ICON_PREFIX}b`);
-    expect(f.children[1]?.icon).toBe(http);
+  const meta: MetaStore = {
+    get: async () => (metaValue ? structuredClone(metaValue) : null),
+    set: async (state) => {
+      calls.push('meta.set');
+      metaValue = structuredClone(state);
+    },
+    getLegacyWallpaper: async () => legacy,
+    clearLegacyWallpaper: async () => {
+      calls.push('meta.clearLegacy');
+      legacy = '';
+    },
+  };
+
+  const kv: KvStore = {
+    get: async (key) => {
+      if (fail.kvRead) throw new Error('kv read down');
+      return kvMap.get(key) ?? '';
+    },
+    keys: async () => {
+      if (fail.kvRead) throw new Error('kv read down');
+      return [...kvMap.keys()];
+    },
+    set: async (key, value) => {
+      calls.push('kv.set');
+      if (fail.kvSet) throw new Error('kv set down');
+      kvMap.set(key, value);
+    },
+    writeBatch: async (entries, dropKey) => {
+      calls.push('kv.writeBatch');
+      // 与真实 adapter 一样：列举发生在这一次事务里
+      const deleteKeys = [...kvMap.keys()].filter(dropKey);
+      batches.push({ entries: new Map(entries), deleteKeys });
+      if (fail.writeBatch) throw new Error('kv batch down');
+      for (const [key, value] of entries) kvMap.set(key, value);
+      for (const key of deleteKeys) kvMap.delete(key);
+    },
+  };
+
+  return {
+    ...createPersist({ meta, kv }),
+    calls,
+    batches,
+    kvMap,
+    fail,
+    /** 落盘序列，去掉 legacy 清理噪声 */
+    writes: () => calls.filter((c) => c !== 'meta.clearLegacy'),
+    storedMeta: () => metaValue,
+    storedLegacy: () => legacy,
+  };
+}
+
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('落盘顺序与失败', () => {
+  it('壁纸像素 → 图标与 GC 同事务 → meta', async () => {
+    const p = memPersist();
+    await p.save(stateOf([app('a', DATA_A), folder('f', [app('b', DATA_B)])], WALLPAPER));
+
+    expect(p.writes()).toEqual(['kv.set', 'kv.writeBatch', 'meta.set']);
+    expect(p.batches).toHaveLength(1);
+    expect([...p.batches[0]!.entries.keys()]).toEqual([iconIdbKey('a'), iconIdbKey('b')]);
   });
 
-  it('http 图标保持原址，不产生 icon 步骤', () => {
-    const http = 'https://example.com/a.png';
-    const steps = persistPlan({
-      ...createEmptyState(),
-      pages: [[app('a', http)]],
-    });
+  it('壁纸像素写失败则整单中止，不提交 meta', async () => {
+    const p = memPersist();
+    p.fail.kvSet = true;
 
-    expect(steps.map((s) => s.kind)).toEqual(['wallpaper', 'meta']);
-    const metaStep = steps[1];
-    expect(metaStep?.kind).toBe('meta');
-    if (metaStep?.kind !== 'meta') return;
-    expect(metaStep.meta.pages[0]![0]).toMatchObject({ id: 'a', icon: http });
-    expect(metaStep.meta.wallpaper.imageUrl).toBe('');
+    await expect(p.save(stateOf([app('a', DATA_A)], WALLPAPER))).rejects.toThrow();
+    expect(p.writes()).toEqual(['kv.set']);
+    expect(p.storedMeta()).toBeNull();
+  });
+
+  it('有新图标像素却写失败时不发 meta，免得 idb: 引用永远空白', async () => {
+    const p = memPersist();
+    p.fail.writeBatch = true;
+
+    await p.save(stateOf([app('a', DATA_A)], WALLPAPER));
+    expect(p.writes()).toEqual(['kv.set', 'kv.writeBatch']);
+    expect(p.storedMeta()).toBeNull();
+  });
+
+  it('没有新像素时，事务失败仍提交 meta', async () => {
+    const p = memPersist();
+    p.fail.writeBatch = true;
+
+    await p.save(stateOf([app('c', HTTP_ICON)], WALLPAPER));
+    expect(p.writes()).toEqual(['kv.set', 'kv.writeBatch', 'meta.set']);
+    expect(p.storedMeta()?.pages[0]![0]).toMatchObject({ icon: HTTP_ICON });
   });
 });
 
-describe('saveState', () => {
-  it('壁纸写入失败则整单中止，不提交 fetchedOn/wallhavenId', async () => {
-    setMetaValue.mockClear();
-    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.stubGlobal('indexedDB', {
-      open: () => {
-        throw new Error('idb down');
-      },
-    });
-    await expect(
-      saveState({
-        ...createEmptyState(),
-        wallpaper: { imageUrl: 'data:image/jpeg;base64,wp', fetchedOn: '2026-01-01', wallhavenId: 'w' },
-      }),
-    ).rejects.toThrow();
-    expect(setMetaValue).not.toHaveBeenCalled();
-    err.mockRestore();
-    vi.unstubAllGlobals();
+describe('图标像素与 GC', () => {
+  it('data: 进 kv 并在 meta 里换成引用；http 原址保留', async () => {
+    const p = memPersist();
+    await p.save(stateOf([app('a', DATA_A), app('c', HTTP_ICON)], WALLPAPER));
+
+    expect(p.kvMap.get(iconIdbKey('a'))).toBe(DATA_A);
+    expect(p.kvMap.has(iconIdbKey('c'))).toBe(false);
+    expect(p.storedMeta()?.pages[0]![0]).toMatchObject({ icon: `${META_ICON_PREFIX}a` });
+    expect(p.storedMeta()?.pages[0]![1]).toMatchObject({ icon: HTTP_ICON });
+    expect(p.storedMeta()?.wallpaper.imageUrl).toBe('');
+  });
+
+  it('删掉 App 后清掉它的图标像素，活着的不动', async () => {
+    const p = memPersist();
+    await p.save(stateOf([app('a', DATA_A), app('b', DATA_B)], WALLPAPER));
+    await p.save(stateOf([app('a', DATA_A)], WALLPAPER));
+
+    expect(p.batches.at(-1)!.deleteKeys).toEqual([iconIdbKey('b')]);
+    expect(p.kvMap.has(iconIdbKey('b'))).toBe(false);
+    expect(p.kvMap.get(iconIdbKey('a'))).toBe(DATA_A);
+  });
+
+  it('壁纸像素不被图标 GC 误删', async () => {
+    const p = memPersist();
+    await p.save(stateOf([app('a', DATA_A), app('b', DATA_B)], WALLPAPER));
+    await p.save(stateOf([app('a', DATA_A)], WALLPAPER));
+
+    expect((await p.load()).wallpaper.imageUrl).toBe(WALLPAPER);
+  });
+});
+
+describe('读回', () => {
+  it('save 后 load 拿回同一份，像素填回图标', async () => {
+    const p = memPersist();
+    const state = stateOf([app('a', DATA_A), folder('f', [app('b', DATA_B)])], WALLPAPER);
+    await p.save(state);
+
+    const loaded = await p.load();
+    expect(loaded.wallpaper.imageUrl).toBe(WALLPAPER);
+    expect(loaded.pages[0]![0]).toMatchObject({ id: 'a', icon: DATA_A });
+    const f = loaded.pages[0]![1];
+    expect(f?.kind).toBe('folder');
+    if (f?.kind !== 'folder') return;
+    expect(f.children[0]).toMatchObject({ id: 'b', icon: DATA_B });
+  });
+
+  it('像素丢了就回退站点 favicon，不留空白磁贴', async () => {
+    const orphan = app('a', `${META_ICON_PREFIX}a`);
+    const p = memPersist({ meta: stateOf([orphan]) });
+
+    const loaded = await p.load();
+    expect(loaded.pages[0]![0]).toMatchObject({ icon: faviconUrlFor(orphan.url) });
+  });
+
+  it('像素读不出来时退回 favicon，但不许把引用写回盘', async () => {
+    const p = memPersist();
+    await p.save(stateOf([app('a', DATA_A)], WALLPAPER));
+    const before = p.storedMeta();
+    p.calls.length = 0;
+    p.fail.kvRead = true;
+
+    const loaded = await p.load();
+    expect(loaded.pages[0]![0]).toMatchObject({ icon: faviconUrlFor('https://example.com/a') });
+    // 一旦回写，meta 里的 idb:a 就会变成 favicon，而像素其实还躺在 kv 里
+    expect(p.writes()).not.toContain('meta.set');
+    expect(p.storedMeta()).toEqual(before);
+    expect(p.kvMap.get(iconIdbKey('a'))).toBe(DATA_A);
+  });
+
+  it('内置作者图标升级会顺手落盘', async () => {
+    const p = memPersist({ meta: stateOf([app('gh', '', 'https://github.com/')]) });
+
+    const loaded = await p.load();
+    const upgraded = loaded.pages[0]![0]!;
+    expect(upgraded.kind).toBe('app');
+    if (upgraded.kind !== 'app') return;
+    expect(upgraded.icon.startsWith('data:image/svg+xml')).toBe(true);
+    expect(p.writes()).toContain('meta.set');
+  });
+});
+
+describe('迁移', () => {
+  it('legacy 壁纸 key 迁进 kv 并被清掉', async () => {
+    const p = memPersist({ meta: stateOf([app('a', HTTP_ICON)]), legacy: WALLPAPER });
+
+    expect((await p.load()).wallpaper.imageUrl).toBe(WALLPAPER);
+    expect(p.storedLegacy()).toBe('');
+    expect((await p.load()).wallpaper.imageUrl).toBe(WALLPAPER);
+  });
+
+  it('meta 里嵌着 data: 壁纸时剥离并落盘', async () => {
+    const p = memPersist({ meta: stateOf([app('a', HTTP_ICON)], WALLPAPER) });
+
+    expect((await p.load()).wallpaper.imageUrl).toBe(WALLPAPER);
+    expect(p.storedMeta()?.wallpaper.imageUrl).toBe('');
+    expect(p.storedMeta()?.wallpaper.fetchedOn).toBe('2026-01-01');
+  });
+
+  it('meta 里嵌着 data: 图标时迁进 kv', async () => {
+    const p = memPersist({ meta: stateOf([app('a', DATA_A)]) });
+
+    await p.load();
+    expect(p.kvMap.get(iconIdbKey('a'))).toBe(DATA_A);
+    expect(p.storedMeta()?.pages[0]![0]).toMatchObject({ icon: `${META_ICON_PREFIX}a` });
+  });
+});
+
+describe('写入队列', () => {
+  it('连发只落最后一份', async () => {
+    const p = memPersist();
+    const first = p.save({ ...stateOf([app('a', HTTP_ICON)]), hitokoto: { text: '1', from: '' } });
+    const second = p.save({ ...stateOf([app('a', HTTP_ICON)]), hitokoto: { text: '2', from: '' } });
+    const third = p.save({ ...stateOf([app('a', HTTP_ICON)]), hitokoto: { text: '3', from: '' } });
+    await Promise.all([first, second, third]);
+
+    expect(p.writes().filter((c) => c === 'meta.set')).toHaveLength(1);
+    expect(p.storedMeta()?.hitokoto.text).toBe('3');
+  });
+
+  it('一次失败不卡住后续 save', async () => {
+    const p = memPersist();
+    p.fail.kvSet = true;
+    await expect(p.save(stateOf([app('a', HTTP_ICON)], WALLPAPER))).rejects.toThrow();
+
+    p.fail.kvSet = false;
+    await p.save(stateOf([app('a', HTTP_ICON)], WALLPAPER));
+    expect(p.storedMeta()?.pages[0]![0]).toMatchObject({ id: 'a' });
   });
 });

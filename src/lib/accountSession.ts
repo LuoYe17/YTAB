@@ -3,7 +3,7 @@
 import type { AuthOk } from './accountApi';
 import { storage } from 'wxt/utils/storage';
 
-export type AccountProvider = 'github';
+type AccountProvider = 'github';
 
 export type AccountSession = {
   provider: AccountProvider;

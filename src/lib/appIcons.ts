@@ -1,6 +1,7 @@
 /** App 图标：上屏只走 srcFor；落盘拆分为 pack / unpack；添加时 resolve。 */
 
 import { getBestIcon } from 'favicon-pro';
+import { blobToDataUrl } from './dataUrl';
 import { extractIconBlobs, hydrateIconBlobs, META_ICON_PREFIX } from './iconPersist';
 import type { AppItem, YtabState } from './types';
 
@@ -82,15 +83,6 @@ export function bundledIconUrl(siteUrl: string): string {
   const host = hostnameOf(siteUrl);
   if (!host) return '';
   return BUNDLED[host] ?? BUNDLED[host.replace(/^www\./, '')] ?? '';
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
 }
 
 async function urlToDataUrl(url: string): Promise<string> {

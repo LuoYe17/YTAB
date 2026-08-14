@@ -8,6 +8,7 @@
 
 import { resolveAppIcon } from './appIcons';
 import { realClock, type Clock } from './clock';
+import { blobToDataUrl } from './dataUrl';
 import { createAppFromUrl, hostnameFallback, normalizeUrl, urlReadyToFetch } from './defaults';
 import type { AppItem } from './types';
 
@@ -65,15 +66,6 @@ async function fetchSiteTitle(siteUrl: string): Promise<string> {
   }
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
 /**
  * 建一份草稿。`initial` 只在建的时候读一次，所以换编辑对象时对话框必须重建
  * （`App.svelte` 用 `{#key}` 保证）。
@@ -82,7 +74,7 @@ export function createAppDraft(deps: AppDraftDeps) {
   const clock = deps.clock ?? realClock;
   const resolveIcon = deps.resolveIcon ?? resolveAppIcon;
   const fetchTitle = deps.fetchTitle ?? fetchSiteTitle;
-  const readImageFile = deps.readImageFile ?? readFileAsDataUrl;
+  const readImageFile = deps.readImageFile ?? blobToDataUrl;
   const initial = deps.initial ?? null;
 
   let url = initial?.url ?? '';

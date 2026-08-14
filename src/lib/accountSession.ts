@@ -1,6 +1,7 @@
 /** 这台记住的登录：token + 解开后的 raw key。卸扩展或登出会没。 */
 
 import type { AuthOk } from './accountApi';
+import { blobToDataUrl } from './dataUrl';
 import { storage } from 'wxt/utils/storage';
 
 type AccountProvider = 'github';
@@ -100,15 +101,6 @@ export async function sessionFromAuth(auth: AuthOk): Promise<AccountSession> {
     hasBackup: auth.hasBackup,
     avatar: await cacheAvatar(auth.avatar ?? githubAvatarUrl(auth.userId)),
   };
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
 }
 
 /** 已登录且解开（rawKey / salt / iter 齐了）：自动备份只在这时上传。 */

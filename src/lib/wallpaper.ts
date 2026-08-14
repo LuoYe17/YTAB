@@ -1,6 +1,7 @@
 /** 壁纸：Wallhaven 拉取、内存预取池、换图会话。一次成图；上屏与 persist 由调用方负责。 */
 
 import { DEFAULT_SETTINGS, type Settings, type WallpaperState } from './types';
+import { blobToDataUrl } from './dataUrl';
 import { visibleTagPresets } from './settingsFilters';
 import type { WallpaperFailReason } from './wallpaperFail';
 
@@ -93,15 +94,6 @@ function displayMaxWidth(): number {
   if (typeof window === 'undefined') return 1920;
   const w = Math.round(window.screen.width * (window.devicePixelRatio || 1));
   return Math.min(Math.max(w, 1280), MAX_DISPLAY_WIDTH);
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
 }
 
 async function fetchBlob(url: string): Promise<Blob> {

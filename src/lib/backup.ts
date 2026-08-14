@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { blobToDataUrl } from './dataUrl';
 import { stripLocalIcons } from './iconPersist';
 import type { YtabState } from './types';
 
@@ -144,13 +145,4 @@ async function resolveIcon(zip: JSZip, icon: string): Promise<string> {
           : 'image/png';
   const blob = new Blob([buf], { type: mime });
   return await blobToDataUrl(blob);
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
 }

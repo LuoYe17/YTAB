@@ -27,3 +27,4 @@
 ### 资产清单
 
 **DialogShell**（`src/components/DialogShell.svelte`）：居中小弹窗的遮罩 / Esc / `role=dialog` 一律用它。禁止再复制 `.overlay` + `.backdrop`。文件夹叠加层（FolderOverlay）、首次启动、设置内层 confirm、CtxMenu 不走这套。
+**blobToDataUrl**（`src/lib/dataUrl.ts`）：文件/Blob 转 dataURL 一律用它，禁止复制 FileReader 包装。

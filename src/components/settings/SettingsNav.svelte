@@ -3,11 +3,10 @@
   import { tick, untrack } from 'svelte';
   import type { Snippet } from 'svelte';
   import type { AccountSession } from '../../lib/accountSession';
+  import type { SettingsTab } from '../../lib/types';
   import GhostTip from '../GhostTip.svelte';
 
-  type Tab = 'general' | 'wallpaper' | 'account';
-
-  const TABS: { id: Tab; label: string }[] = [
+  const TABS: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: '通用' },
     { id: 'wallpaper', label: '壁纸' },
   ];
@@ -22,10 +21,10 @@
     onSelectTab,
     githubMark,
   }: {
-    tab: Tab;
+    tab: SettingsTab;
     session: AccountSession | null;
     showWho: boolean;
-    onSelectTab: (id: Tab) => void;
+    onSelectTab: (id: SettingsTab) => void;
     githubMark: Snippet;
   } = $props();
 
@@ -62,7 +61,7 @@
   </svg>
 {/snippet}
 
-{#snippet tabIcon(id: Tab)}
+{#snippet tabIcon(id: SettingsTab)}
   {#if id === 'general'}
     <!-- Lucide settings，ISC https://lucide.dev -->
     <svg class="tab-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">

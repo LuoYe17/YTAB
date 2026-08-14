@@ -37,6 +37,9 @@ export type FolderItem = {
 
 export type GridItem = AppItem | FolderItem;
 
+/** 设置弹窗侧栏与面板 id。 */
+export type SettingsTab = 'general' | 'wallpaper' | 'account';
+
 export type Settings = {
   openTarget: OpenTarget;
   bingEndpoint: BingEndpoint;

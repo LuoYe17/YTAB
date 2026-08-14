@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import type { Settings, YtabState } from '../lib/types';
+  import type { Settings, SettingsTab, YtabState } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
   import { plainNotice } from '../lib/notice';
   import { fetchBackup, deleteBackup } from '../lib/accountApi';
@@ -26,7 +26,6 @@
   import SettingsWallpaperPane from './settings/SettingsWallpaperPane.svelte';
   import './settings/settingsChrome.css';
 
-  type Tab = 'general' | 'wallpaper' | 'account';
   type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
 
   let {
@@ -52,7 +51,7 @@
   } = $props();
 
   /* svelte-ignore state_referenced_locally */
-  let tab = $state<Tab>(highlight ? 'wallpaper' : 'general');
+  let tab = $state<SettingsTab>(highlight ? 'wallpaper' : 'general');
   let accountBusy = $state(false);
   let sheet = $state<Sheet>(null);
   let session = $state<AccountSession | null>(null);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 壁纸面板：Wallhaven 折叠壳。滚动与 fade 由 SettingsModal 的 .body 包。
+  // 壁纸 tab 的伞形面板，不是 Wallhaven 专用壳。以后加非 Wallhaven 源时在其下新增平级子组件，命名参照 SettingsWallhavenKey / SettingsWallhavenFilters。滚动与 fade 由 SettingsModal 的 .body 包。
   import type { Snippet } from 'svelte';
   import { foldMax } from '../../lib/foldMax';
   import { plainNotice } from '../../lib/notice';

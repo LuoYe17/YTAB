@@ -1,6 +1,6 @@
 /** 壁纸：Wallhaven 拉取、内存预取池、换图会话。一次成图；上屏与 persist 由调用方负责。 */
 
-import type { Settings, WallpaperState } from './types';
+import { DEFAULT_SETTINGS, type Settings, type WallpaperState } from './types';
 import { visibleTagPresets } from './settingsFilters';
 import type { WallpaperFailReason } from './wallpaperFail';
 
@@ -55,7 +55,7 @@ export function categoriesParam(c: Settings['wallhavenCategories']): string {
 }
 
 /**
- * 拼 Wallhaven 搜索参数。缺字段的旧存储按热门、无标签。
+ * 拼 Wallhaven 搜索参数。缺字段的旧存储按随机、无标签。
  * 热门必须带 `topRange`，否则接口会拒。
  * 已选标签若不在当前分类菜单里，不写入 `q`。
  * 第 1 页不写 `page`，避免和旧请求 URL 分叉；随机排序才带 `seed`，同一轮换页共用。
@@ -64,7 +64,7 @@ export function wallhavenSearchParams(
   settings: Settings,
   extra?: { page?: number; seed?: string },
 ): URLSearchParams {
-  const sorting = settings.wallhavenSorting || 'toplist';
+  const sorting = settings.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting;
   const params = new URLSearchParams({
     sorting,
     purity: purityParam(settings.wallhavenPurity),
@@ -196,7 +196,7 @@ export async function pickUnseenWallpaperHit(
   let page = 1;
   const tried = new Set<number>();
   const seed =
-    (settings.wallhavenSorting || 'toplist') === 'random' ? randomSearchSeed() : undefined;
+    (settings.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting) === 'random' ? randomSearchSeed() : undefined;
 
   for (let attempt = 0; attempt < PICK_ATTEMPTS; attempt++) {
     try {

@@ -2,7 +2,7 @@
   import { tick, untrack } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import type { Settings, WallhavenSorting } from '../lib/types';
+  import { DEFAULT_SETTINGS, type Settings, type WallhavenSorting, type YtabState } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
   import { plainNotice } from '../lib/notice';
   import { applyFilter, visibleTagPresets, type FilterAction } from '../lib/settingsFilters';
@@ -22,7 +22,6 @@
     sessionUnlocked,
     type AccountSession,
   } from '../lib/accountSession';
-  import type { YtabState } from '../lib/types';
   import CapsuleSwitch from './CapsuleSwitch.svelte';
   import CustomScroll from './CustomScroll.svelte';
   import GhostTip from './GhostTip.svelte';
@@ -677,7 +676,7 @@
                     </div>
                     <SegmentedControl
                       labelledBy="wallpaper-sorting"
-                      value={settings.wallhavenSorting || 'toplist'}
+                      value={settings.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting}
                       options={SORTING_OPTIONS}
                       fill
                       onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}

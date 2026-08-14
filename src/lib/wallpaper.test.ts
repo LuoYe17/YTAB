@@ -15,20 +15,20 @@ function item(id: string): WallpaperItem {
 }
 
 describe('mergeSettings', () => {
-  it('旧设置缺字段则补上默认动漫和热门', () => {
+  it('旧设置缺字段则补上默认动漫和随机', () => {
     const s = mergeSettings({ openTarget: 'new' });
     expect(s.openTarget).toBe('new');
     expect(s.wallhavenCategories).toEqual(DEFAULT_SETTINGS.wallhavenCategories);
-    expect(s.wallhavenSorting).toBe('toplist');
+    expect(s.wallhavenSorting).toBe('random');
     expect(s.wallhavenApiKey).toBe('');
   });
 });
 
 describe('wallhavenSearchParams', () => {
-  it('默认热门近一月、只要动漫、不带关键词、桌面比例仍在', () => {
+  it('默认随机、只要动漫、不带关键词、桌面比例仍在', () => {
     const p = wallhavenSearchParams(DEFAULT_SETTINGS);
-    expect(p.get('sorting')).toBe('toplist');
-    expect(p.get('topRange')).toBe('1M');
+    expect(p.get('sorting')).toBe('random');
+    expect(p.get('topRange')).toBeNull();
     expect(p.get('q')).toBeNull();
     expect(p.get('purity')).toBe('100');
     expect(p.get('categories')).toBe('010');
@@ -43,15 +43,20 @@ describe('wallhavenSearchParams', () => {
   });
 
   it('第 1 页不写 page；随机才带 seed', () => {
-    expect(wallhavenSearchParams(DEFAULT_SETTINGS, { page: 1, seed: 'abc123' }).get('page')).toBeNull();
-    expect(wallhavenSearchParams(DEFAULT_SETTINGS, { page: 1, seed: 'abc123' }).get('seed')).toBeNull();
+    const hot = { ...DEFAULT_SETTINGS, wallhavenSorting: 'toplist' as const };
+    expect(wallhavenSearchParams(hot, { page: 1, seed: 'abc123' }).get('page')).toBeNull();
+    expect(wallhavenSearchParams(hot, { page: 1, seed: 'abc123' }).get('seed')).toBeNull();
     expect(wallhavenSearchParams(DEFAULT_SETTINGS, { page: 3 }).get('page')).toBe('3');
-    const random = wallhavenSearchParams(
-      { ...DEFAULT_SETTINGS, wallhavenSorting: 'random' },
-      { page: 2, seed: 'abc123' },
-    );
+    const random = wallhavenSearchParams(DEFAULT_SETTINGS, { page: 2, seed: 'abc123' });
+    expect(random.get('sorting')).toBe('random');
     expect(random.get('page')).toBe('2');
     expect(random.get('seed')).toBe('abc123');
+  });
+
+  it('热门才带近一月 topRange', () => {
+    const p = wallhavenSearchParams({ ...DEFAULT_SETTINGS, wallhavenSorting: 'toplist' });
+    expect(p.get('sorting')).toBe('toplist');
+    expect(p.get('topRange')).toBe('1M');
   });
 
   it('选了标签则按空格写入 q', () => {

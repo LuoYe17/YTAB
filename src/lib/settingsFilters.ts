@@ -138,7 +138,7 @@ export type FilterResult = {
   invalidatePool: boolean;
 };
 
-/** 尺度/分类按字段比，避免键序让 JSON.stringify 误判；排序缺省当热门，标签仍按序列化比。 */
+/** 尺度/分类按字段比，避免键序让 JSON.stringify 误判；排序缺省跟 DEFAULT，标签仍按序列化比。 */
 function filterQueryChanged(prev: Settings, next: Settings): boolean {
   const p = prev.wallhavenPurity;
   const n = next.wallhavenPurity;
@@ -151,7 +151,8 @@ function filterQueryChanged(prev: Settings, next: Settings): boolean {
     pc.general !== nc.general ||
     pc.anime !== nc.anime ||
     pc.people !== nc.people ||
-    (prev.wallhavenSorting || 'toplist') !== (next.wallhavenSorting || 'toplist') ||
+    (prev.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting) !==
+      (next.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting) ||
     JSON.stringify(prev.wallhavenTags ?? []) !== JSON.stringify(next.wallhavenTags ?? [])
   );
 }

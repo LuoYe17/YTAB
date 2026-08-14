@@ -85,7 +85,7 @@ export const DEFAULT_SETTINGS: Settings = {
   wallhavenKeyOk: false,
   wallhavenPurity: { sfw: true, sketchy: false, nsfw: false },
   wallhavenCategories: { general: false, anime: true, people: false },
-  wallhavenSorting: 'toplist',
+  wallhavenSorting: 'random',
   wallhavenTags: [],
 };
 

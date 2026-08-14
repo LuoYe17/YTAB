@@ -172,8 +172,8 @@ describe('applyFilter', () => {
   });
 
   it('改排序则清池', () => {
-    const result = applyFilter(DEFAULT_SETTINGS, { type: 'sorting', value: 'random' });
-    expect(result.settings.wallhavenSorting).toBe('random');
+    const result = applyFilter(DEFAULT_SETTINGS, { type: 'sorting', value: 'toplist' });
+    expect(result.settings.wallhavenSorting).toBe('toplist');
     expect(result.invalidatePool).toBe(true);
   });
 

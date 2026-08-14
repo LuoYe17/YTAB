@@ -137,7 +137,7 @@
   });
 
   function onShellEscape() {
-    if (sheet) sheet = null;
+    if (sheet) closeSheet();
     else onClose();
   }
 

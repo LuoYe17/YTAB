@@ -1,6 +1,6 @@
 /** Domain types for YTAB persisted state. */
 
-export type OpenTarget = 'current' | 'new';
+type OpenTarget = 'current' | 'new';
 
 export type BingEndpoint = 'cn' | 'www';
 

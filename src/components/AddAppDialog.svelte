@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { AppItem } from '../lib/types';
-  import { createAppFromUrl, hostnameFallback, normalizeUrl, urlReadyToFetch } from '../lib/defaults';
-  import { resolveAppIcon, srcFor } from '../lib/appIcons';
+  import { hostnameFallback } from '../lib/defaults';
+  import { createAppDraft, type AppDraftSnapshot } from '../lib/appDraft';
+  import { srcFor } from '../lib/appIcons';
   import GhostTip from './GhostTip.svelte';
 
   let {
@@ -17,36 +18,27 @@
     onCancel: () => void;
   } = $props();
 
-  /* one-shot seed from props when dialog opens */
-  /* svelte-ignore state_referenced_locally */
-  let url = $state(initial?.url ?? '');
-  /* svelte-ignore state_referenced_locally */
-  let name = $state(initial?.name ?? '');
-  /* svelte-ignore state_referenced_locally */
-  let icon = $state(initial?.icon ?? '');
-  /* svelte-ignore state_referenced_locally */
-  let iconField = $state(publicIconField(initial?.icon ?? ''));
-  // 用户给过的图（上传、手填、编辑带入）不被自动抓取盖掉；只有全自动来的图才允许换。
-  /* svelte-ignore state_referenced_locally */
-  let iconLocked = $state(Boolean((initial?.icon ?? '').trim()));
-  let phase = $state<'idle' | 'scan' | 'success'>('idle');
-  /* svelte-ignore state_referenced_locally */
-  let canSave = $state(!!initial);
-  let saving = $state(false);
-  let fileError = $state('');
   let imgFailed = $state(false);
   let fileEl = $state<HTMLInputElement | null>(null);
   let urlEl = $state<HTMLInputElement | null>(null);
   let sheetEl = $state<HTMLFormElement | null>(null);
-  let autofillJob: Promise<void> | null = null;
-  let autofillGen = 0;
+
+  // initial 只在打开时喂一次；换编辑对象时 App.svelte 的 {#key} 会重建本组件。
   /* svelte-ignore state_referenced_locally */
-  let lastFetched = initial ? normalizeUrl(initial.url) : '';
+  const draft = createAppDraft({
+    initial,
+    onChange: (next) => {
+      snap = next;
+    },
+  });
+  let snap = $state<AppDraftSnapshot>(draft.snapshot());
+
+  onDestroy(() => draft.dispose());
 
   const preview = $derived(
-    srcFor({ id: initial?.id ?? '', kind: 'app', name, url, icon }),
+    srcFor({ id: initial?.id ?? '', kind: 'app', name: snap.name, url: snap.url, icon: snap.icon }),
   );
-  const glyph = $derived((name.trim() || hostnameFallback(url) || 'A').slice(0, 1));
+  const glyph = $derived((snap.name.trim() || hostnameFallback(snap.url) || 'A').slice(0, 1));
 
   $effect(() => {
     void preview;
@@ -93,141 +85,17 @@
     };
   });
 
-  function sleep(ms: number) {
-    return new Promise<void>((r) => setTimeout(r, ms));
-  }
-
-  /** 输入框只给人看/填的 http 地址；自动抓到的 data: 不摊进去。 */
-  function publicIconField(value: string): string {
-    return /^https?:\/\//i.test(value.trim()) ? value : '';
-  }
-
-  function applyIconField() {
-    const v = iconField.trim();
-    if (/^https?:\/\//i.test(v) || v.startsWith('data:')) {
-      icon = v;
-      iconLocked = true;
-    }
-  }
-
-  $effect(() => {
-    const raw = url;
-    const ready = urlReadyToFetch(raw);
-    const next = ready ? normalizeUrl(raw) : '';
-    if (!ready || next !== lastFetched) canSave = false;
-    if (!ready) return;
-    if (next === lastFetched) return;
-    if (phase === 'success') phase = 'idle';
-    const timer = window.setTimeout(() => {
-      void autofill();
-    }, 480);
-    return () => window.clearTimeout(timer);
-  });
-
-  async function autofill() {
-    if (!urlReadyToFetch(url)) return;
-    const normalized = normalizeUrl(url);
-    if (normalized === lastFetched) return;
-    lastFetched = normalized;
-    url = normalized;
-    if (!name.trim()) name = hostnameFallback(normalized);
-    phase = 'scan';
-    const jobUrl = normalized;
-    const jobId = ++autofillGen;
-    const started = Date.now();
-    const stillCurrent = () => jobId === autofillGen && normalizeUrl(url) === jobUrl;
-    const signal = AbortSignal.timeout(8000);
-    const iconTask = (async () => {
-      if (iconLocked || publicIconField(iconField)) return;
-      try {
-        const resolved = await Promise.race([
-          resolveAppIcon(normalized),
-          new Promise<string>((r) => {
-            signal.addEventListener('abort', () => r(''), { once: true });
-          }),
-        ]);
-        if (!stillCurrent() || iconLocked || publicIconField(iconField)) return;
-        icon = resolved;
-      } catch {
-        /* 回退字母占位 */
-      }
-    })();
-    const titleTask = (async () => {
-      try {
-        const res = await fetch(normalized, { method: 'GET', signal });
-        if (!stillCurrent() || !res.ok) return;
-        const html = await res.text();
-        if (!stillCurrent()) return;
-        const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-        if (m?.[1] && !initial) name = m[1].trim().slice(0, 40);
-      } catch {
-        /* 标题常被 CORS 挡，名称已有主机名 */
-      }
-    })();
-    const job = Promise.all([iconTask, titleTask]).then(() => {});
-    autofillJob = job;
-    try {
-      await iconTask;
-      if (!stillCurrent()) {
-        if (jobId === autofillGen) phase = 'idle';
-        return;
-      }
-      const left = 700 - (Date.now() - started);
-      if (left > 0) await sleep(left);
-      if (!stillCurrent()) {
-        if (jobId === autofillGen) phase = 'idle';
-        return;
-      }
-      phase = 'success';
-      canSave = true;
-      await sleep(650);
-      if (jobId === autofillGen) phase = 'idle';
-    } finally {
-      if (autofillJob === job) autofillJob = null;
-    }
-  }
-
-  function onPickedFile(file: File) {
-    const ok = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'].includes(file.type);
-    if (!ok) {
-      fileError = '仅支持 png / jpg / svg / webp';
-      return;
-    }
-    fileError = '';
-    const reader = new FileReader();
-    reader.onload = () => {
-      icon = String(reader.result);
-      iconField = '';
-      iconLocked = true;
-    };
-    reader.readAsDataURL(file);
-  }
-
   function onFileChange(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
-    if (file) onPickedFile(file);
+    if (file) void draft.pickFile(file);
     input.value = '';
   }
 
   async function submit(e: Event) {
     e.preventDefault();
-    if (!canSave || !url.trim() || saving) return;
-    if (urlReadyToFetch(url) && normalizeUrl(url) !== lastFetched) void autofill();
-    if (autofillJob) await autofillJob;
-    const normalized = normalizeUrl(url);
-    saving = true;
-    try {
-      let nextIcon = icon.trim();
-      if (!nextIcon) nextIcon = await resolveAppIcon(normalized);
-      const nextName = name.trim() || hostnameFallback(normalized);
-      const base = initial
-        ? { ...initial, url: normalized, name: nextName, icon: nextIcon }
-        : createAppFromUrl(normalized, nextName, nextIcon);
-      onSave(base);
-    } finally {
-      saving = false;
-    }
+    const app = await draft.submit();
+    if (app) onSave(app);
   }
 </script>
 
@@ -263,7 +131,13 @@
         <span class="title">网址</span>
         {@render helpMark('填网站地址。输入完就会自动抓名称和图标。')}
       </div>
-      <input bind:this={urlEl} bind:value={url} placeholder="https://" required />
+      <input
+        bind:this={urlEl}
+        value={snap.url}
+        oninput={(e) => draft.setUrl(e.currentTarget.value)}
+        placeholder="https://"
+        required
+      />
     </div>
 
     <div class="block">
@@ -271,7 +145,11 @@
         <span class="title">名称</span>
         {@render helpMark('显示在图标下面。自动抓到后也能改。')}
       </div>
-      <input bind:value={name} placeholder="留空则用网站名" />
+      <input
+        value={snap.name}
+        oninput={(e) => draft.setName(e.currentTarget.value)}
+        placeholder="留空则用网站名"
+      />
     </div>
 
     <div class="block">
@@ -284,23 +162,23 @@
           type="button"
           class="icon-btn ios-tile"
           onclick={() => fileEl?.click()}
-          aria-label={phase === 'scan' ? '正在获取' : phase === 'success' ? '已获取' : '更换图标'}
-          aria-busy={phase === 'scan'}
-          disabled={phase !== 'idle'}
+          aria-label={snap.phase === 'scan' ? '正在获取' : snap.phase === 'success' ? '已获取' : '更换图标'}
+          aria-busy={snap.phase === 'scan'}
+          disabled={snap.phase !== 'idle'}
         >
           {#if preview && !imgFailed}
             <img
               src={preview}
               alt=""
-              class:dim={phase !== 'idle'}
+              class:dim={snap.phase !== 'idle'}
               onerror={() => {
                 imgFailed = true;
               }}
             />
           {:else}
-            <span class="ph" class:dim={phase !== 'idle'}>{glyph}</span>
+            <span class="ph" class:dim={snap.phase !== 'idle'}>{glyph}</span>
           {/if}
-          {#if phase === 'scan'}
+          {#if snap.phase === 'scan'}
             <span class="faceid" aria-hidden="true">
               <svg viewBox="0 0 64 64" width="40" height="40">
                 <circle class="faceid-track" cx="32" cy="32" r="22" />
@@ -317,7 +195,7 @@
                 </g>
               </svg>
             </span>
-          {:else if phase === 'success'}
+          {:else if snap.phase === 'success'}
             <span class="ok" aria-hidden="true" out:fade={{ duration: 380 }}>
               <svg viewBox="0 0 64 64" width="40" height="40">
                 <circle class="success-ring" cx="32" cy="32" r="22" />
@@ -343,28 +221,28 @@
           tabindex="-1"
         />
         <input
-          bind:value={iconField}
-          oninput={applyIconField}
+          value={snap.iconField}
+          oninput={(e) => draft.setIconField(e.currentTarget.value)}
           placeholder="自动获取，也可填链接"
         />
       </div>
     </div>
 
-    {#if fileError}
-      <p class="err">{fileError}</p>
+    {#if snap.fileError}
+      <p class="err">{snap.fileError}</p>
     {/if}
 
-    <div class="row" class:ready={canSave}>
+    <div class="row" class:ready={snap.canSave}>
       <button type="button" class="ghost" onclick={onCancel}>取消</button>
       <div class="save-slot">
         <button
           type="submit"
           class="action"
-          disabled={!canSave || saving}
-          tabindex={canSave ? 0 : -1}
-          aria-hidden={!canSave}
+          disabled={!snap.canSave || snap.saving}
+          tabindex={snap.canSave ? 0 : -1}
+          aria-hidden={!snap.canSave}
         >
-          {saving ? '保存中…' : '保存'}
+          {snap.saving ? '保存中…' : '保存'}
         </button>
       </div>
     </div>

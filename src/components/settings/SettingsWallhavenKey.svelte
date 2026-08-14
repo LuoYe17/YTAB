@@ -12,12 +12,14 @@
 
   let {
     settings,
+    hasKey,
     glowApiKey,
     onCommitFilter,
     onPatch,
     helpMark,
   }: {
     settings: Settings;
+    hasKey: boolean;
     glowApiKey: boolean;
     onCommitFilter: (action: FilterAction) => void;
     onPatch: (partial: Partial<Settings>) => void;
@@ -29,7 +31,6 @@
   let keyFlash = $state<'ok' | 'fail' | null>(null);
   let testBusy = $state(false);
 
-  const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
   const keyOk = $derived(hasKey && settings.wallhavenKeyOk);
 
   $effect(() => {

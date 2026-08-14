@@ -80,6 +80,10 @@
     tab = 'wallpaper';
   });
 
+  function patch(partial: Partial<Settings>) {
+    onChange({ ...settings, ...partial });
+  }
+
   function onShellEscape() {
     if (sheet) closeSheet();
     else onClose();
@@ -286,7 +290,7 @@
               <SettingsGeneralPane
                 {settings}
                 showReset={!accountConfigured()}
-                {onChange}
+                onPatch={patch}
                 {helpMark}
                 {resetRow}
               />
@@ -295,7 +299,7 @@
         {:else if tab === 'wallpaper'}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
-              <SettingsWallpaperPane {settings} {highlight} {onChange} {helpMark} />
+              <SettingsWallpaperPane {settings} {highlight} {onChange} onPatch={patch} {helpMark} />
             </CustomScroll>
           </div>
         {:else if tab === 'account'}

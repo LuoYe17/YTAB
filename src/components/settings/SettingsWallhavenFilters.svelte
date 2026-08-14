@@ -18,11 +18,13 @@
 
   let {
     settings,
+    hasKey,
     glowFilters,
     onCommitFilter,
     helpMark,
   }: {
     settings: Settings;
+    hasKey: boolean;
     glowFilters: boolean;
     onCommitFilter: (action: FilterAction) => void;
     helpMark: Snippet<[string]>;
@@ -30,7 +32,6 @@
 
   let tagsOpen = $state(false);
 
-  const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
   const tagPresets = $derived(visibleTagPresets(settings.wallhavenCategories));
   const sortingOptions = $derived(
     SORTING_OPTIONS.map((o) => ({

@@ -15,11 +15,13 @@
     settings,
     highlight = null,
     onChange,
+    onPatch,
     helpMark,
   }: {
     settings: Settings;
     highlight?: WallpaperFailFocus | null;
     onChange: (next: Settings, invalidatePool?: boolean) => void;
+    onPatch: (partial: Partial<Settings>) => void;
     helpMark: Snippet<[string]>;
   } = $props();
 
@@ -42,9 +44,7 @@
     return () => window.clearTimeout(id);
   });
 
-  function patch(partial: Partial<Settings>) {
-    onChange({ ...settings, ...partial });
-  }
+  const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
 
   function commitFilter(action: FilterAction) {
     const result = applyFilter(settings, action);
@@ -115,13 +115,15 @@
     <div class="fold-clip">
       <SettingsWallhavenKey
         {settings}
+        {hasKey}
         glowApiKey={glow === 'apiKey'}
         onCommitFilter={commitFilter}
-        onPatch={patch}
+        {onPatch}
         {helpMark}
       />
       <SettingsWallhavenFilters
         {settings}
+        {hasKey}
         glowFilters={glow === 'filters'}
         onCommitFilter={commitFilter}
         {helpMark}

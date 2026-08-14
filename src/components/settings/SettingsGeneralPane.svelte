@@ -7,20 +7,16 @@
   let {
     settings,
     showReset,
-    onChange,
+    onPatch,
     helpMark,
     resetRow,
   }: {
     settings: Settings;
     showReset: boolean;
-    onChange: (next: Settings, invalidatePool?: boolean) => void;
+    onPatch: (partial: Partial<Settings>) => void;
     helpMark: Snippet<[string]>;
     resetRow: Snippet;
   } = $props();
-
-  function patch(partial: Partial<Settings>) {
-    onChange({ ...settings, ...partial });
-  }
 </script>
 
 <div class="st-block st-inline">
@@ -35,7 +31,7 @@
       { value: 'current', label: '当前标签' },
       { value: 'new', label: '新标签' },
     ]}
-    onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
+    onChange={(v) => onPatch({ openTarget: v as Settings['openTarget'] })}
   />
 </div>
 <div class="st-block st-inline">
@@ -50,7 +46,7 @@
       { value: 'cn', label: '国内' },
       { value: 'www', label: '国际' },
     ]}
-    onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
+    onChange={(v) => onPatch({ bingEndpoint: v as Settings['bingEndpoint'] })}
   />
 </div>
 {#if showReset}

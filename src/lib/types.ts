@@ -89,7 +89,7 @@ export const DEFAULT_SETTINGS: Settings = {
   wallhavenTags: [],
 };
 
-export const EMPTY_HITOKOTO: HitokotoState = {
+const EMPTY_HITOKOTO: HitokotoState = {
   text: '',
   from: '',
 };

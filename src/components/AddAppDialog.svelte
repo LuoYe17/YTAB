@@ -7,7 +7,7 @@
   import { createAppDraft, type AppDraftSnapshot } from '../lib/appDraft';
   import { srcFor } from '../lib/appIcons';
   import DialogShell from './DialogShell.svelte';
-  import GhostTip from './GhostTip.svelte';
+  import HelpMark from './HelpMark.svelte';
   import './effects.css';
 
   let {
@@ -123,12 +123,6 @@
   }
 </script>
 
-{#snippet helpMark(text: string)}
-  <GhostTip label={text} wrap>
-    <button type="button" class="help" aria-label={text}>?</button>
-  </GhostTip>
-{/snippet}
-
 <DialogShell labelledBy="app-dlg-title" zIndex={70} fadeMs={200} onClose={onCancel}>
   <form
     bind:this={sheetEl}
@@ -208,7 +202,7 @@
           placeholder="自动获取，也可填链接"
         />
         <span class="field-help">
-          {@render helpMark('点左边从本机选图，或把图片链接贴进来。自动抓到的留空就行。')}
+          <HelpMark text="点左边从本机选图，或把图片链接贴进来。自动抓到的留空就行。" />
         </span>
       </div>
     </div>
@@ -226,7 +220,7 @@
           required
         />
         <span class="field-help">
-          {@render helpMark('输入停住就会抓名称和图标，不必点出这个框。')}
+          <HelpMark text="输入停住就会抓名称和图标，不必点出这个框。" />
         </span>
       </div>
     </div>
@@ -242,7 +236,7 @@
           placeholder="留空则用网站名"
         />
         <span class="field-help">
-          {@render helpMark('网格里图标底下那行字。留空用网站名，自动填的也能改。')}
+          <HelpMark text="网格里图标底下那行字。留空用网站名，自动填的也能改。" />
         </span>
       </div>
     </div>
@@ -432,25 +426,6 @@
   }
   .title {
     font-weight: 600;
-  }
-  .help {
-    appearance: none;
-    width: 1rem;
-    height: 1rem;
-    margin: 0;
-    padding: 0;
-    border: 1px solid rgba(255, 255, 255, 0.28);
-    border-radius: 50%;
-    background: transparent;
-    color: rgba(255, 255, 255, 0.48);
-    font: inherit;
-    font-size: 0.68rem;
-    line-height: 1;
-    cursor: help;
-  }
-  .help:hover {
-    color: rgba(255, 255, 255, 0.88);
-    border-color: rgba(255, 255, 255, 0.5);
   }
   input:not(.sr) {
     width: 100%;

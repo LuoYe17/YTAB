@@ -19,7 +19,7 @@
   } from '../lib/accountSession';
   import CustomScroll from './CustomScroll.svelte';
   import DialogShell from './DialogShell.svelte';
-  import GhostTip from './GhostTip.svelte';
+  import HelpMark from './HelpMark.svelte';
   import SettingsAccountPane from './settings/SettingsAccountPane.svelte';
   import SettingsGeneralPane from './settings/SettingsGeneralPane.svelte';
   import SettingsNav from './settings/SettingsNav.svelte';
@@ -251,9 +251,7 @@
 </script>
 
 {#snippet helpMark(text: string)}
-  <GhostTip label={text} wrap>
-    <button type="button" class="help" aria-label={text}>?</button>
-  </GhostTip>
+  <HelpMark {text} />
 {/snippet}
 
 {#snippet githubMark()}
@@ -485,25 +483,6 @@
   }
   .pass:focus {
     border-color: rgba(126, 203, 255, 0.55);
-  }
-  .help {
-    appearance: none;
-    width: 1rem;
-    height: 1rem;
-    margin: 0;
-    padding: 0;
-    border: 1px solid rgba(255, 255, 255, 0.28);
-    border-radius: 50%;
-    background: transparent;
-    color: rgba(255, 255, 255, 0.48);
-    font: inherit;
-    font-size: 0.68rem;
-    line-height: 1;
-    cursor: help;
-  }
-  .help:hover {
-    color: rgba(255, 255, 255, 0.88);
-    border-color: rgba(255, 255, 255, 0.5);
   }
   .confirm {
     position: absolute;

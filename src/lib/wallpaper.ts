@@ -9,6 +9,8 @@ const MAX_DISPLAY_WIDTH = 2560;
 const AT_LEAST = '1920x1080';
 const RATIOS = '16x9,16x10';
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png']);
+const NO_EXCLUDE: ReadonlySet<string> = new Set();
+const PICK_ATTEMPTS = 3;
 
 export type WallpaperItem = {
   imageUrl: string;
@@ -56,8 +58,12 @@ export function categoriesParam(c: Settings['wallhavenCategories']): string {
  * 拼 Wallhaven 搜索参数。缺字段的旧存储按热门、无标签。
  * 热门必须带 `topRange`，否则接口会拒。
  * 已选标签若不在当前分类菜单里，不写入 `q`。
+ * 第 1 页不写 `page`，避免和旧请求 URL 分叉；随机排序才带 `seed`，同一轮换页共用。
  */
-export function wallhavenSearchParams(settings: Settings): URLSearchParams {
+export function wallhavenSearchParams(
+  settings: Settings,
+  extra?: { page?: number; seed?: string },
+): URLSearchParams {
   const sorting = settings.wallhavenSorting || 'toplist';
   const params = new URLSearchParams({
     sorting,
@@ -70,6 +76,8 @@ export function wallhavenSearchParams(settings: Settings): URLSearchParams {
   const q = (settings.wallhavenTags ?? []).filter((id) => allowed.has(id)).join(' ');
   if (q) params.set('q', q);
   if (sorting === 'toplist') params.set('topRange', '1M');
+  if (extra?.page && extra.page > 1) params.set('page', String(extra.page));
+  if (sorting === 'random' && extra?.seed) params.set('seed', extra.seed);
   return params;
 }
 
@@ -126,50 +134,101 @@ export async function toDisplayDataUrl(source: Blob | string): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.88);
 }
 
-async function searchHits(settings: Settings): Promise<WallhavenSearchHit[]> {
+async function searchHits(
+  settings: Settings,
+  page: number,
+  seed?: string,
+): Promise<{ hits: WallhavenSearchHit[]; lastPage: number }> {
   // 密钥走请求头，避免进查询串被代理/日志记下。
   const key = (settings.wallhavenApiKey ?? '').trim();
-  const res = await fetch(`https://wallhaven.cc/api/v1/search?${wallhavenSearchParams(settings)}`, {
-    headers: key ? { 'X-API-Key': key } : undefined,
-  });
+  const res = await fetch(
+    `https://wallhaven.cc/api/v1/search?${wallhavenSearchParams(settings, { page, seed })}`,
+    { headers: key ? { 'X-API-Key': key } : undefined },
+  );
   if (!res.ok) throw new Error(`wallhaven ${res.status}`);
-  const data = (await res.json()) as { data?: WallhavenSearchHit[] };
-  return (data.data ?? []).filter((h) => {
+  const data = (await res.json()) as {
+    data?: WallhavenSearchHit[];
+    meta?: { last_page?: number };
+  };
+  const hits = (data.data ?? []).filter((h) => {
     if (!h.path) return false;
     if (h.file_type && !ALLOWED_TYPES.has(h.file_type)) return false;
     if (!hitAllowed(h, settings)) return false;
     return true;
   });
+  const lastPage = Math.max(1, Math.floor(Number(data.meta?.last_page)) || 1);
+  return { hits, lastPage };
 }
 
-async function pickHit(
+function pickFresh(
+  hits: WallhavenSearchHit[],
+  exclude: ReadonlySet<string>,
+): WallhavenSearchHit | undefined {
+  const fresh = hits.filter((h) => !exclude.has(h.id));
+  if (!fresh.length) return undefined;
+  return fresh[Math.floor(Math.random() * fresh.length)];
+}
+
+function anotherPage(lastPage: number, tried: ReadonlySet<number>): number | undefined {
+  const left: number[] = [];
+  for (let p = 1; p <= lastPage; p++) {
+    if (!tried.has(p)) left.push(p);
+  }
+  if (!left.length) return undefined;
+  return left[Math.floor(Math.random() * left.length)];
+}
+
+function randomSearchSeed(): string {
+  return Math.random().toString(36).slice(2, 8).padEnd(6, 'x');
+}
+
+export type UnseenWallpaperHit = { id: string; path: string };
+
+/**
+ * 从 Wallhaven 抽一张 exclude 里没有的。先选中再下载，避免把看过的图拉成全图再扔掉。
+ * 本页未看过的抽完则换页；三次仍没有则 empty——不要把同一张当换成功。
+ */
+export async function pickUnseenWallpaperHit(
   settings: Settings,
-): Promise<{ hit: WallhavenSearchHit } | { fail: WallpaperFailReason }> {
+  exclude: ReadonlySet<string> = NO_EXCLUDE,
+): Promise<{ ok: true; hit: UnseenWallpaperHit } | { ok: false; reason: WallpaperFailReason }> {
   let gotOkEmpty = false;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  let page = 1;
+  const tried = new Set<number>();
+  const seed =
+    (settings.wallhavenSorting || 'toplist') === 'random' ? randomSearchSeed() : undefined;
+
+  for (let attempt = 0; attempt < PICK_ATTEMPTS; attempt++) {
     try {
-      const hits = await searchHits(settings);
-      if (hits.length) {
-        const hit = hits[Math.floor(Math.random() * hits.length)] ?? hits[0]!;
-        return { hit };
-      }
+      const { hits, lastPage } = await searchHits(settings, page, seed);
+      tried.add(page);
+      const hit = pickFresh(hits, exclude);
+      if (hit) return { ok: true, hit: { id: hit.id, path: hit.path } };
       gotOkEmpty = true;
+      const next = anotherPage(lastPage, tried);
+      if (next == null) break;
+      page = next;
     } catch {
       /* 网络/限额；若曾成功搜到零张则更像筛选过严 */
     }
   }
-  return { fail: gotOkEmpty ? 'empty' : 'network' };
+  return { ok: false, reason: gotOkEmpty ? 'empty' : 'network' };
 }
 
 export type WallpaperAcquireResult =
   | { ok: true; item: WallpaperItem }
   | { ok: false; reason: WallpaperFailReason };
 
+/**
+ * 抽一张未看过的并做成显示用 data URL。
+ * @param exclude 本会话已上屏或已入池的 wallhaven id；不要把同一张当成功。
+ */
 export async function fetchRandomWallpaper(
   settings: Settings,
+  exclude: ReadonlySet<string> = NO_EXCLUDE,
 ): Promise<WallpaperAcquireResult> {
-  const picked = await pickHit(settings);
-  if ('fail' in picked) return { ok: false, reason: picked.fail };
+  const picked = await pickUnseenWallpaperHit(settings, exclude);
+  if (!picked.ok) return picked;
   try {
     const imageUrl = await toDisplayDataUrl(picked.hit.path);
     return {
@@ -185,6 +244,11 @@ export async function fetchRandomWallpaper(
   }
 }
 
+type WallpaperFetch = (
+  settings: Settings,
+  exclude: ReadonlySet<string>,
+) => Promise<WallpaperAcquireResult>;
+
 /** In-memory prefetch pool (not persisted). 由 surface 持有；日界与取图都经注入口，便于整条验证。 */
 class WallpaperPool {
   private items: WallpaperItem[] = [];
@@ -196,7 +260,7 @@ class WallpaperPool {
 
   constructor(
     private deps: {
-      fetch: (settings: Settings) => Promise<WallpaperAcquireResult>;
+      fetch: WallpaperFetch;
       today: () => string;
     },
   ) {}
@@ -218,6 +282,16 @@ class WallpaperPool {
     this.epoch++;
   }
 
+  /**
+   * 改筛选：丢掉按旧条件预取的图，本会话已上屏的仍排除。
+   * 池里还没上屏的不算看过，id 放回去，新筛选仍可抽到。
+   */
+  dropItems(): void {
+    for (const item of this.items) this.seenIds.delete(item.wallhavenId);
+    this.items = [];
+    this.epoch++;
+  }
+
   rememberCurrent(id?: string): void {
     if (id) this.seenIds.add(id);
   }
@@ -225,6 +299,12 @@ class WallpaperPool {
   take(): WallpaperItem | null {
     this.invalidateIfNewDay();
     return this.items.shift() ?? null;
+  }
+
+  acquire(settings: Settings): Promise<WallpaperAcquireResult> {
+    const pooled = this.take();
+    if (pooled) return Promise.resolve({ ok: true, item: pooled });
+    return this.deps.fetch(settings, this.seenIds);
   }
 
   async fill(settings: Settings, target = POOL_SIZE): Promise<void> {
@@ -240,7 +320,7 @@ class WallpaperPool {
       while (this.items.length < target && guard < target * 4) {
         if (this.epoch !== epochAtStart) return;
         guard++;
-        const got = await this.deps.fetch(settings);
+        const got = await this.deps.fetch(settings, this.seenIds);
         if (this.epoch !== epochAtStart) return;
         if (!got.ok) break;
         if (this.seenIds.has(got.item.wallhavenId)) continue;
@@ -365,7 +445,7 @@ export type WallpaperSurfaceDeps = {
   onDisplay: (imageUrl: string) => void;
   /** 落盘一份壁纸状态。surface 不认识 chrome.storage，也不管账号备份。 */
   persist: (wallpaper: WallpaperState) => Promise<void>;
-  fetch?: (settings: Settings) => Promise<WallpaperAcquireResult>;
+  fetch?: WallpaperFetch;
   decode?: (src: string) => Promise<void>;
   /** 本地自然日；池的日界与 `fetchedOn` 必须用同一把尺。 */
   today?: () => string;
@@ -380,16 +460,15 @@ export type WallpaperSurfaceDeps = {
  * 图已经上屏，吞掉的话下次打开就变回旧图且无人知情。
  */
 export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
-  const fetchOne = deps.fetch ?? fetchRandomWallpaper;
+  const fetchOne: WallpaperFetch = deps.fetch ?? fetchRandomWallpaper;
   const today = deps.today ?? todayLocal;
   const schedule = deps.schedule ?? idleSchedule;
   const pool = new WallpaperPool({ fetch: fetchOne, today });
+  /** 当前上屏的 wallhaven id；改筛选清池时还要排除它。 */
+  let showingId: string | undefined;
 
   const session = createWallpaperSession({
-    acquire: (settings) => {
-      const pooled = pool.take();
-      return pooled ? Promise.resolve({ ok: true, item: pooled }) : fetchOne(settings);
-    },
+    acquire: (settings) => pool.acquire(settings),
     decode: deps.decode ?? decodeWallpaperImage,
     beforeDaily: () => pool.clear(),
     today,
@@ -400,12 +479,14 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
   }
 
   function keepShowing(current: WallpaperState, settings: Settings): void {
+    showingId = current.wallhavenId;
     deps.onDisplay(current.imageUrl);
     pool.rememberCurrent(current.wallhavenId);
     refill(settings);
   }
 
   async function land(item: WallpaperItem, settings: Settings): Promise<void> {
+    showingId = item.wallhavenId;
     deps.onDisplay(item.imageUrl);
     await deps.persist({
       imageUrl: item.imageUrl,
@@ -419,7 +500,9 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
   return {
     /** 打开起始页：先把已存的图放上屏，不发请求。 */
     restore(current: WallpaperState): void {
+      showingId = current.wallhavenId;
       deps.onDisplay(current.imageUrl);
+      pool.rememberCurrent(current.wallhavenId);
     },
 
     /** 按本地自然日换图；同日维持现状，失败也维持现状。 */
@@ -444,9 +527,10 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
       await land(item, settings);
     },
 
-    /** 筛选条件变了：旧池作废并重新预取，不动上屏。 */
+    /** 筛选条件变了：旧池作废并重新预取，不动上屏；本会话看过的仍排除。 */
     onFiltersChanged(settings: Settings): void {
-      pool.clear();
+      pool.dropItems();
+      pool.rememberCurrent(showingId);
       refill(settings);
     },
 
@@ -457,6 +541,7 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
      */
     adopt(item: { imageUrl: string; wallhavenId?: string } | null, settings: Settings): void {
       pool.clear();
+      showingId = item?.wallhavenId;
       if (item) {
         deps.onDisplay(item.imageUrl);
         pool.rememberCurrent(item.wallhavenId);
@@ -466,6 +551,7 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
 
     /** 重置本机：清空上屏与旧池，且不补池——用户这会儿在首次启动界面。 */
     forget(): void {
+      showingId = undefined;
       pool.clear();
       deps.onDisplay('');
     },

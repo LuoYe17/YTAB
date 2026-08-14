@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, mergeSettings, type WallpaperState } from './types';
 import type { WallpaperFailReason } from './wallpaperFail';
 import {
   createWallpaperSession,
   createWallpaperSurface,
+  pickUnseenWallpaperHit,
   todayLocal,
   wallhavenSearchParams,
   type WallpaperItem,
@@ -39,6 +40,18 @@ describe('wallhavenSearchParams', () => {
   it('密钥不进查询串', () => {
     const p = wallhavenSearchParams({ ...DEFAULT_SETTINGS, wallhavenApiKey: 'secret-key' });
     expect(p.get('apikey')).toBeNull();
+  });
+
+  it('第 1 页不写 page；随机才带 seed', () => {
+    expect(wallhavenSearchParams(DEFAULT_SETTINGS, { page: 1, seed: 'abc123' }).get('page')).toBeNull();
+    expect(wallhavenSearchParams(DEFAULT_SETTINGS, { page: 1, seed: 'abc123' }).get('seed')).toBeNull();
+    expect(wallhavenSearchParams(DEFAULT_SETTINGS, { page: 3 }).get('page')).toBe('3');
+    const random = wallhavenSearchParams(
+      { ...DEFAULT_SETTINGS, wallhavenSorting: 'random' },
+      { page: 2, seed: 'abc123' },
+    );
+    expect(random.get('page')).toBe('2');
+    expect(random.get('seed')).toBe('abc123');
   });
 
   it('选了标签则按空格写入 q', () => {
@@ -151,7 +164,7 @@ function harness(startDay = '2026-08-13') {
       if (persistFails) throw new Error('disk down');
       persisted.push(wp);
     },
-    fetch: async () => {
+    fetch: async (_settings, exclude = new Set()) => {
       fetches += 1;
       if (gate) await gate;
       if (failNext) {
@@ -159,9 +172,18 @@ function harness(startDay = '2026-08-13') {
         failNext = null;
         return { ok: false, reason };
       }
-      seq += 1;
-      const id = fixedId ?? `id${seq}`;
-      return { ok: true, item: { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: day } };
+      if (fixedId) {
+        if (exclude.has(fixedId)) return { ok: false, reason: 'empty' };
+        return { ok: true, item: { imageUrl: `data:${fixedId}`, wallhavenId: fixedId, fetchedOn: day } };
+      }
+      for (let i = 0; i < 32; i++) {
+        seq += 1;
+        const id = `id${seq}`;
+        if (!exclude.has(id)) {
+          return { ok: true, item: { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: day } };
+        }
+      }
+      return { ok: false, reason: 'empty' };
     },
     decode: async () => {},
     today: () => day,
@@ -402,19 +424,97 @@ describe('wallpaper surface', () => {
     expect(h.fetches()).toBeGreaterThan(0);
   });
 
-  it('看过的图不再入池，也不会把预取卡死', async () => {
+  it('看过的图不再入池，抽尽则换图失败，不上同一张', async () => {
     const h = harness();
     h.alwaysSameId('dup');
     await h.surface.ensureDaily(DEFAULT_SETTINGS, stored('data:old', '2026-08-12'));
     const afterLand = h.fetches();
     await h.settleFills();
 
-    // 每张都是看过的 id，池仍是空的；guard 兜住，不会无限拉
-    expect(h.fetches()).toBeGreaterThan(afterLand);
-    expect(h.fetches()).toBeLessThanOrEqual(afterLand + 12);
+    expect(h.fetches()).toBe(afterLand + 1);
+    expect(await h.surface.prepare(DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'empty' });
+    expect(h.shown()).toBe('data:dup');
+  });
 
-    const before = h.fetches();
+  it('改筛选后下一张不是当前上屏', async () => {
+    const h = harness();
+    h.surface.restore(stored('data:old', '2026-08-13', 'id1'));
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+
     await h.surface.prepare(DEFAULT_SETTINGS);
-    expect(h.fetches()).toBe(before + 1);
+    await h.surface.commit(DEFAULT_SETTINGS);
+    expect(h.shown()).not.toBe('data:old');
+    expect(h.persisted.at(-1)?.wallhavenId).not.toBe('id1');
+  });
+
+  it('池空直拉也不回已看的 id', async () => {
+    const h = harness();
+    h.surface.restore(stored('data:old', '2026-08-13', 'id1'));
+
+    expect(await h.surface.prepare(DEFAULT_SETTINGS)).toEqual({ ok: true });
+    await h.surface.commit(DEFAULT_SETTINGS);
+    expect(h.shown()).toBe('data:id2');
+  });
+});
+
+function searchJson(ids: string[], lastPage = 1) {
+  return {
+    data: ids.map((id) => ({ id, path: `https://example.test/${id}.jpg`, file_type: 'image/jpeg', purity: 'sfw' })),
+    meta: { last_page: lastPage },
+  };
+}
+
+describe('pickUnseenWallpaperHit', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubPages(pages: Record<string, unknown>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: RequestInfo | URL) => {
+        const u = String(url);
+        const page = new URL(u).searchParams.get('page') ?? '1';
+        const body = pages[page] ?? searchJson([]);
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+  }
+
+  it('跳过 exclude，从本页剩下的里抽', async () => {
+    stubPages({ '1': searchJson(['a', 'b']) });
+    await expect(pickUnseenWallpaperHit(DEFAULT_SETTINGS, new Set(['a']))).resolves.toEqual({
+      ok: true,
+      hit: { id: 'b', path: 'https://example.test/b.jpg' },
+    });
+  });
+
+  it('本页都看过则换页', async () => {
+    stubPages({ '1': searchJson(['a'], 2), '2': searchJson(['b'], 2) });
+    const got = await pickUnseenWallpaperHit(DEFAULT_SETTINGS, new Set(['a']));
+    expect(got).toEqual({ ok: true, hit: { id: 'b', path: 'https://example.test/b.jpg' } });
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('page=2');
+  });
+
+  it('抽尽则 empty，不当成换成功', async () => {
+    stubPages({ '1': searchJson(['a']) });
+    await expect(pickUnseenWallpaperHit(DEFAULT_SETTINGS, new Set(['a']))).resolves.toEqual({
+      ok: false,
+      reason: 'empty',
+    });
+  });
+
+  it('随机排序带 seed，同一轮换页共用', async () => {
+    stubPages({ '1': searchJson(['a'], 2), '2': searchJson(['b'], 2) });
+    await pickUnseenWallpaperHit({ ...DEFAULT_SETTINGS, wallhavenSorting: 'random' }, new Set(['a']));
+    const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    const seeds = urls.map((u) => new URL(u).searchParams.get('seed'));
+    expect(seeds[0]).toBeTruthy();
+    expect(seeds[1]).toBe(seeds[0]);
+    expect(urls[0]).not.toContain('page=');
+    expect(urls[1]).toContain('page=2');
   });
 });

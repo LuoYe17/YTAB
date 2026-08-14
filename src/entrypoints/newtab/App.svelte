@@ -136,13 +136,13 @@
   }
 
   async function refreshHitokoto() {
-    const next = await fetchHitokoto();
+    const next = await fetchHitokoto({ exclude: ytab.hitokoto.text });
     if (!next.ok) return;
     await persist((prev) => ({ ...prev, hitokoto: next.value }));
   }
 
   async function changeHitokoto(): Promise<HitokotoFetchResult> {
-    const next = await fetchHitokoto();
+    const next = await fetchHitokoto({ exclude: ytab.hitokoto.text });
     if (!next.ok) return next;
     await persist((prev) => ({ ...prev, hitokoto: next.value }));
     return next;

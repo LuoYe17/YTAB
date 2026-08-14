@@ -30,3 +30,12 @@ export function applyImportedState(
     },
   };
 }
+
+/**
+ * 首次启动扫描态先把桌面接上，卡片先不收。
+ * `applyImportedState` 默认会把 onboardingDone 置 true，卡片立刻卸掉的话
+ * 成功动画还没播，底下网格若还没接到 pages 就会闪出空桌面。
+ */
+export function holdFirstRun(state: YtabState): YtabState {
+  return { ...state, onboardingDone: false };
+}

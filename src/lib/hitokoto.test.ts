@@ -72,12 +72,18 @@ describe('fetchHitokoto', () => {
     await expect(pending).resolves.toEqual({ ok: false, reason: 'network' });
   });
 
-  it('请求不走缓存', async () => {
-    const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ hitokoto: '你好' }), { status: 200 }),
-    );
+  it('请求不走浏览器缓存，且每次 URL 不同以免撞官方边缘缓存', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL) => {
+      return new Response(JSON.stringify({ hitokoto: '你好' }), { status: 200 });
+    });
     vi.stubGlobal('fetch', fetchMock);
     await fetchHitokoto();
+    await fetchHitokoto();
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).not.toBe(urls[1]);
+    expect(urls[0]).toContain('encode=json');
+    expect(urls[0]).toMatch(/[?&]_=/);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ cache: 'no-store' }),

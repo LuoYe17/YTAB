@@ -23,8 +23,13 @@
   import type { PageDropTarget } from '../../lib/gridDrag';
   import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
-  import { applyImportedState } from '../../lib/importApply';
-  import { flushAccountBackup, scheduleAccountBackup, setPassphraseAndUpload } from '../../lib/accountBackup';
+  import { applyImportedState, holdFirstRun } from '../../lib/importApply';
+  import {
+    cancelAccountBackup,
+    flushAccountBackup,
+    scheduleAccountBackup,
+    setPassphraseAndUpload,
+  } from '../../lib/accountBackup';
   import { backupInterest } from '../../lib/accountInterest';
   import { passphraseOk } from '../../lib/accountCrypto';
   import { clearSession, loadSession, needsFirstPassphrase } from '../../lib/accountSession';
@@ -180,11 +185,14 @@
     hitokoto: HitokotoState | null;
     wallpaper: WallpaperItem | null;
   }) {
+    const pages = paginate(result.apps);
+    // 先接网格再 persist：packCurrent 以 grid.pages 为准，反过来会把空桌面排进备份。
+    grid = createAppGridView(pages, 0);
     await persist((prev) => {
       const next: YtabState = {
         ...prev,
-        onboardingDone: true,
-        pages: paginate(result.apps),
+        onboardingDone: false,
+        pages,
       };
       if (result.hitokoto) next.hitokoto = result.hitokoto;
       if (result.wallpaper) {
@@ -196,9 +204,12 @@
       }
       return next;
     });
-    grid = createAppGridView(paginate(result.apps), 0);
     // 没拿到图也要备池：这一开页后面还要「换一张」。
     wallpaper.adopt(result.wallpaper, ytab.settings);
+  }
+
+  async function onFirstRunReveal() {
+    await persist((prev) => ({ ...prev, onboardingDone: true }));
     const session = await loadSession();
     if (needsFirstPassphrase(session)) needPass = true;
   }
@@ -228,12 +239,12 @@
     if (invalidatePool) wallpaper.onFiltersChanged(settings);
   }
 
-  /** 整份换掉：落盘、关设置、重建网格。壁纸怎么接由调用方决定。 */
+  /** 整份换掉：先接网格再落盘。壁纸怎么接由调用方决定。 */
   async function landState(next: YtabState) {
+    grid = createAppGridView(next.pages, 0);
     await persist(() => next);
     settingsOpen = false;
     settingsHighlight = null;
-    grid = createAppGridView(next.pages, 0);
   }
 
   async function onImportState(next: YtabState) {
@@ -242,7 +253,14 @@
     wallpaper.adopt(state.wallpaper, state.settings);
   }
 
+  async function onRestoreDuringFirstRun(next: YtabState) {
+    const { state } = applyImportedState(next);
+    await landState(holdFirstRun(state));
+    wallpaper.adopt(state.wallpaper, state.settings);
+  }
+
   async function onResetAll() {
+    cancelAccountBackup();
     await clearSession();
     needPass = false;
     const { state } = applyImportedState(createEmptyState(), { endFirstRun: false });
@@ -358,21 +376,24 @@
   </div>
 
   {#if !ytab.onboardingDone}
-    <FirstRun settings={ytab.settings} onChoose={onFirstRun} onRestored={onImportState} />
+    <FirstRun
+      settings={ytab.settings}
+      onChoose={onFirstRun}
+      onRestored={onRestoreDuringFirstRun}
+      onReveal={onFirstRunReveal}
+    />
   {/if}
 
   {#if addOpen || editingApp}
-    <!-- 换编辑对象要重建：草稿把 initial 锁在自己的闭包里 -->
-    {#key editingApp?.id ?? 'new'}
-      <AddAppDialog
-        initial={editingApp}
-        onSave={editingApp ? saveEditedApp : addApp}
-        onCancel={() => {
-          addOpen = false;
-          editingApp = null;
-        }}
-      />
-    {/key}
+    <!-- 不要套 {#key}：会把 outro 掐掉，开关看起来像闪一下。换编辑对象由对话框自己重建草稿。 -->
+    <AddAppDialog
+      initial={editingApp}
+      onSave={editingApp ? saveEditedApp : addApp}
+      onCancel={() => {
+        addOpen = false;
+        editingApp = null;
+      }}
+    />
   {/if}
 
   {#if settingsOpen}

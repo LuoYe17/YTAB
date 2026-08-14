@@ -38,6 +38,7 @@
   const REPO_URL = 'https://github.com/LuoYe17/YTAB';
   const VERSION = 'v0.1.0';
   const KEY_URL = 'https://wallhaven.cc/settings/account';
+  const SITE_URL = 'https://wallhaven.cc';
   const SORTING_OPTIONS: { value: WallhavenSorting; label: string }[] = [
     { value: 'random', label: '随机' },
     { value: 'date_added', label: '最新' },
@@ -93,7 +94,17 @@
   const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
   const keyOk = $derived(hasKey && settings.wallhavenKeyOk);
   const tagPresets = $derived(visibleTagPresets(settings.wallhavenCategories));
+  const sortingOptions = $derived(
+    SORTING_OPTIONS.map((o) => ({
+      ...o,
+      collapsed: o.value === 'relevance' && (settings.wallhavenTags?.length ?? 0) === 0,
+    })),
+  );
   const unlocked = $derived(sessionUnlocked(session));
+
+  $effect(() => {
+    if (!accountConfigured() && tab === 'account') tab = 'general';
+  });
 
   $effect(() => {
     // 这里要画头像，缺了就顺手补一次；其余读会话的地方不该因此写盘。
@@ -413,6 +424,75 @@
   </svg>
 {/snippet}
 
+{#snippet userMark()}
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
+    <circle cx="12" cy="8" r="3.4" stroke="currentColor" stroke-width="2" />
+    <path
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      d="M5.2 19.2c.9-3.2 3.6-4.8 6.8-4.8s5.9 1.6 6.8 4.8"
+    />
+  </svg>
+{/snippet}
+
+{#snippet resetRow()}
+  <div class="inline-row">
+    <div class="head">
+      <span class="title">重置本机</span>
+      {@render helpMark('清掉本机全部数据，回到第一次打开。此设备登录会忘掉。云端还在。')}
+    </div>
+    <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置</button>
+  </div>
+{/snippet}
+
+{#snippet wallhavenMark()}
+  <svg class="wh-mark" viewBox="0 0 1024 1024" width="16" height="16" aria-hidden="true">
+    <defs>
+      <linearGradient id="ytab-wh-plate" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#f0f0f0" />
+        <stop offset="1" stop-color="#d0d0d0" />
+      </linearGradient>
+    </defs>
+    <rect width="1024" height="1024" rx="180" ry="180" fill="url(#ytab-wh-plate)" />
+    <g transform="translate(512 512) scale(1.08) translate(-537 -483)">
+      <path
+        fill="#2a2a2a"
+        d="M216.8 776.4c-7.2-2-14-4.4-15.2-5.6-4-4 2-16.8 14-30l12-12.8h85.6l13.2-14.4c32-33.6 57.2-86.4 75.6-158.8 22.4-86.4 33.6-127.6 46.4-166 7.2-22.4 12-41.6 10.4-43.2-3.6-4-98.8 17.6-110 24.8-14.8 9.6-18 24-20.4 91.6l-2.4 64-11.6 1.2c-19.2 2.4-29.2-2.4-34-15.6-7.2-20.4-5.2-63.6 3.6-89.6 18-52.8 39.6-74 88.4-87.6 14-3.6 44-12 66.4-18.8 48.4-14 66-14.8 77.2-3.6 4.4 4.4 8 9.6 8 11.2s-9.2 24.4-20.4 50c-12.8 30-22.4 59.6-26 81.2-3.2 19.2-5.6 34.8-4.8 35.6 3.2 2.4 112.4 14 134 14h24.8l2.4-14.8c4.8-30.4 38.8-144 50.4-168.8 14.8-32 46.4-74.8 71.2-97.2 28.4-25.6 64-37.6 105.6-36 11.6 0.8 14.8 2.4 14.8 8.4 0 14.4-18.8 27.6-51.2 34.8-50.4 11.6-58.4 17.2-76.4 52.8-8.4 16.8-18.4 41.6-22.4 54.8s-12 40.4-18.4 60c-6.4 20-14.8 53.2-19.2 74s-12.4 55.2-18 76c-12.8 51.6-30.4 146.8-30.4 164.8 0 20 8.4 25.2 54.4 33.2 43.6 8 50.8 11.6 40 20-11.2 8.4-38.4 12-98.4 12h-54l-1.2-18c-0.4-10 2.8-34 7.2-54 20.4-90.4 36.4-171.2 34.4-173.2-1.2-0.8-26-3.6-55.2-5.6s-63.6-4.8-76.4-6.4c-15.2-2-24.4-1.6-26.4 0.8s-7.2 17.2-12 32.4c-11.6 39.6-41.2 98.8-59.6 118.8-8.4 9.6-23.6 28-33.6 41.2-28 36.4-41.6 49.6-58 56.4-17.2 7.6-65.6 10.8-84.4 6z"
+      />
+    </g>
+  </svg>
+{/snippet}
+
+{#snippet tabIcon(id: Tab)}
+  {#if id === 'general'}
+    <!-- Lucide settings，ISC https://lucide.dev -->
+    <svg class="tab-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <path
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
+    </svg>
+  {:else}
+    <!-- Lucide image，ISC https://lucide.dev -->
+    <svg class="tab-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" stroke="currentColor" stroke-width="2" />
+      <circle cx="9" cy="9" r="2" stroke="currentColor" stroke-width="2" />
+      <path
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"
+      />
+    </svg>
+  {/if}
+{/snippet}
+
 <div
   class="overlay"
   role="dialog"
@@ -423,19 +503,22 @@
   <button type="button" class="backdrop" aria-label="关闭设置" onclick={onClose}></button>
   <div class="sheet ios-sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
     <aside>
-      <button
-        type="button"
-        class="who"
-        class:on={tab === 'account'}
-        onclick={() => (tab = 'account')}
-      >
-        {#if session?.avatar}
-          <img class="who-ava" src={session.avatar} alt="" />
-        {:else}
-          <span class="who-ava ph">{@render githubMark()}</span>
-        {/if}
-        <span class="who-name">{session ? session.label : accountConfigured() ? '登录' : '账号'}</span>
-      </button>
+      {#if accountConfigured()}
+        <button
+          type="button"
+          class="who"
+          class:on={tab === 'account'}
+          onclick={() => (tab = 'account')}
+        >
+          {#if session?.avatar}
+            <img class="who-ava" src={session.avatar} alt="" />
+          {:else}
+            <span class="who-ava ph">{@render userMark()}</span>
+          {/if}
+          <span class="who-name">{session ? session.label : '登录'}</span>
+        </button>
+        <div class="who-rule"></div>
+      {/if}
       <nav bind:this={navEl}>
         <div
           class="pill"
@@ -451,6 +534,7 @@
             class:active={tab === item.id}
             onclick={() => (tab = item.id)}
           >
+            {@render tabIcon(item.id)}
             {item.label}
           </button>
         {/each}
@@ -506,6 +590,11 @@
                   onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
                 />
               </div>
+              {#if !accountConfigured()}
+                <div class="block">
+                  {@render resetRow()}
+                </div>
+              {/if}
             </CustomScroll>
           </div>
         {:else if tab === 'wallpaper'}
@@ -519,17 +608,28 @@
                   aria-expanded={wallhavenOpen}
                   aria-label={wallhavenOpen ? '收起 Wallhaven' : '展开 Wallhaven'}
                   onclick={(e) => {
-                    if ((e.target as HTMLElement).closest('.help')) return;
+                    if ((e.target as HTMLElement).closest('.help, .wh-home')) return;
                     wallhavenOpen = !wallhavenOpen;
                   }}
                   onkeydown={(e) => {
                     if (e.key !== 'Enter' && e.key !== ' ') return;
-                    if ((e.target as HTMLElement).closest('.help')) return;
+                    if ((e.target as HTMLElement).closest('.help, .wh-home')) return;
                     e.preventDefault();
                     wallhavenOpen = !wallhavenOpen;
                   }}
                 >
-                  <span class="title">Wallhaven</span>
+                  <span class="fold-brand">
+                    <a
+                      class="wh-home"
+                      href={SITE_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="打开 Wallhaven 官网"
+                    >
+                      {@render wallhavenMark()}
+                    </a>
+                    <span class="title">Wallhaven</span>
+                  </span>
                   <span class="fold-help">
                     {@render helpMark('拉壁纸用的站。密钥选填；尺度、分类、标签都在这里。')}
                   </span>
@@ -672,12 +772,12 @@
                   <div class="wh-row">
                     <div class="head">
                       <span id="wallpaper-sorting" class="title">排序</span>
-                      {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签时，「相关」更准。')}
+                      {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签才出现「相关」；从随机或最新勾上第一个标签会改到相关。')}
                     </div>
                     <SegmentedControl
                       labelledBy="wallpaper-sorting"
                       value={settings.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting}
-                      options={SORTING_OPTIONS}
+                      options={sortingOptions}
                       fill
                       onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}
                     />
@@ -733,10 +833,10 @@
               </div>
             </CustomScroll>
           </div>
-        {:else}
+        {:else if tab === 'account'}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
-              {#if accountConfigured() && !session}
+              {#if !session}
                 <div class="block inline">
                   <div class="head">
                     <span class="title">云端备份</span>
@@ -794,13 +894,7 @@
                     </button>
                   </div>
                 {/if}
-                <div class="inline-row">
-                  <div class="head">
-                    <span class="title">重置本机</span>
-                    {@render helpMark('清掉本机全部数据，回到第一次打开。此设备登录会忘掉。云端还在。')}
-                  </div>
-                  <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置</button>
-                </div>
+                {@render resetRow()}
               </div>
             </CustomScroll>
           </div>
@@ -949,34 +1043,35 @@
   .who {
     appearance: none;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    margin: 0;
+    gap: 0.4rem;
+    margin: 0.55rem 0.5rem 0;
+    padding: 0.85rem 0.5rem 0.65rem;
     border: 0;
-    background-color: transparent;
+    border-radius: 8px;
+    background: transparent;
     color: inherit;
     font: inherit;
-    text-align: left;
     cursor: pointer;
-    padding: 0.75rem 0.7rem 0.7rem;
-    background-image: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12));
-    background-size: calc(100% - 2.4rem) 1px;
-    background-position: bottom center;
-    background-repeat: no-repeat;
     min-width: 0;
   }
-  .who:hover,
-  .who.on {
-    background-color: rgba(255, 255, 255, 0.06);
+  .who:hover:not(.on) {
+    background: rgba(255, 255, 255, 0.06);
   }
-  .who:hover .who-name,
-  .who.on .who-name {
+  .who.on {
+    background: rgba(255, 255, 255, 0.14);
     color: #fff;
   }
+  .who-rule {
+    height: 1px;
+    margin: 0.4rem 1.2rem 0;
+    background: rgba(255, 255, 255, 0.12);
+    flex-shrink: 0;
+  }
   .who-ava {
-    width: 28px;
-    height: 28px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     object-fit: cover;
     flex-shrink: 0;
@@ -988,16 +1083,18 @@
     color: rgba(255, 255, 255, 0.5);
   }
   .who-ava.ph :global(svg) {
-    width: 16px;
-    height: 16px;
+    width: 22px;
+    height: 22px;
   }
   .who-name {
+    width: 100%;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: 600;
     font-size: 0.82rem;
+    text-align: center;
   }
   nav {
     position: relative;
@@ -1027,6 +1124,9 @@
   }
   nav button {
     appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
     border: 0;
     background: transparent;
     color: inherit;
@@ -1040,6 +1140,13 @@
   }
   nav button.active {
     color: #fff;
+  }
+  .tab-ico {
+    flex-shrink: 0;
+    opacity: 0.78;
+  }
+  nav button.active .tab-ico {
+    opacity: 1;
   }
   .foot {
     display: grid;
@@ -1159,6 +1266,44 @@
   }
   .head.fold:hover {
     background: rgba(255, 255, 255, 0.05);
+  }
+  .fold-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+  .fold-brand .title {
+    line-height: 1;
+  }
+  .wh-home {
+    display: grid;
+    flex-shrink: 0;
+    line-height: 0;
+    border-radius: 0.28em;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+      filter 0.18s ease,
+      box-shadow 0.18s ease;
+  }
+  .wh-home:hover {
+    transform: scale(1.18);
+    filter: brightness(1.22);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  }
+  .wh-home:focus-visible {
+    outline: 2px solid rgba(126, 203, 255, 0.7);
+    outline-offset: 2px;
+  }
+  .wh-mark {
+    display: block;
+    width: 1em;
+    height: 1em;
+    overflow: hidden;
+    border-radius: 0.28em;
   }
   .fold-help {
     display: inline-flex;

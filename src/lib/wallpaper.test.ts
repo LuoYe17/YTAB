@@ -22,6 +22,16 @@ describe('mergeSettings', () => {
     expect(s.wallhavenSorting).toBe('random');
     expect(s.wallhavenApiKey).toBe('');
   });
+
+  it('没标签却停在相关则改成默认随机', () => {
+    const s = mergeSettings({ wallhavenSorting: 'relevance', wallhavenTags: [] });
+    expect(s.wallhavenSorting).toBe('random');
+  });
+
+  it('有标签时相关保留', () => {
+    const s = mergeSettings({ wallhavenSorting: 'relevance', wallhavenTags: ['night'] });
+    expect(s.wallhavenSorting).toBe('relevance');
+  });
 });
 
 describe('wallhavenSearchParams', () => {

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { tick } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { AppItem } from '../lib/types';
-  import { hostnameFallback } from '../lib/defaults';
+  import { faviconUrlFor, hostnameFallback } from '../lib/defaults';
   import { createAppDraft, type AppDraftSnapshot } from '../lib/appDraft';
   import { srcFor } from '../lib/appIcons';
   import GhostTip from './GhostTip.svelte';
@@ -23,21 +23,38 @@
   let urlEl = $state<HTMLInputElement | null>(null);
   let sheetEl = $state<HTMLFormElement | null>(null);
 
-  // initial 只在打开时喂一次；换编辑对象时 App.svelte 的 {#key} 会重建本组件。
-  /* svelte-ignore state_referenced_locally */
-  const draft = createAppDraft({
-    initial,
-    onChange: (next) => {
-      snap = next;
-    },
+  let draft: ReturnType<typeof createAppDraft>;
+  let snap = $state<AppDraftSnapshot>({
+    url: '',
+    name: '',
+    icon: '',
+    iconField: '',
+    phase: 'idle',
+    canSave: false,
+    saving: false,
+    fileError: '',
   });
-  let snap = $state<AppDraftSnapshot>(draft.snapshot());
 
-  onDestroy(() => draft.dispose());
+  // initial 锁在草稿闭包里；换编辑对象时在这里重建，好让外壳 {#if} 能播进出场。
+  $effect.pre(() => {
+    const app = initial ?? null;
+    const d = createAppDraft({
+      initial: app,
+      onChange: (next) => {
+        snap = next;
+      },
+    });
+    snap = d.snapshot();
+    draft = d;
+    return () => d.dispose();
+  });
 
-  const preview = $derived(
-    srcFor({ id: initial?.id ?? '', kind: 'app', name: snap.name, url: snap.url, icon: snap.icon }),
-  );
+  function asApp(icon: string): AppItem {
+    return { id: initial?.id ?? '', kind: 'app', name: snap.name, url: snap.url, icon };
+  }
+  /** 与网格同一条链：内存图 → 内置 → Google。裂图再退内置，避免编辑里只剩字母。 */
+  const preview = $derived(srcFor(asApp(snap.icon)) || faviconUrlFor(snap.url));
+  const previewFb = $derived(srcFor(asApp('')));
   const glyph = $derived((snap.name.trim() || hostnameFallback(snap.url) || 'A').slice(0, 1));
 
   $effect(() => {
@@ -97,6 +114,16 @@
     const app = await draft.submit();
     if (app) onSave(app);
   }
+
+  function onPreviewError(e: Event) {
+    const el = e.currentTarget as HTMLImageElement;
+    if (previewFb && previewFb !== preview && el.dataset.fb !== '1') {
+      el.dataset.fb = '1';
+      el.src = previewFb;
+      return;
+    }
+    imgFailed = true;
+  }
 </script>
 
 {#snippet helpMark(text: string)}
@@ -110,121 +137,123 @@
   role="dialog"
   aria-modal="true"
   aria-labelledby="app-dlg-title"
-  in:fade={{ duration: 180 }}
-  out:fade={{ duration: 160 }}
+  transition:fade|global={{ duration: 200 }}
 >
   <button type="button" class="backdrop" aria-label="关闭" onclick={onCancel}></button>
   <form
     bind:this={sheetEl}
     class="sheet ios-sheet"
     onsubmit={submit}
-    in:scale={{ duration: 240, start: 0.9, easing: cubicOut }}
-    out:scale={{ duration: 200, start: 0.9, easing: cubicOut }}
+    transition:scale|global={{ duration: 320, start: 0.78, easing: cubicOut }}
   >
-    <header>
-      <h2 id="app-dlg-title">{initial ? '编辑 App' : '添加 App'}</h2>
-      <button type="button" class="close" onclick={onCancel} aria-label="关闭">×</button>
-    </header>
+    <button type="button" class="close" onclick={onCancel} aria-label="关闭">×</button>
+    <h2 id="app-dlg-title">{initial ? '编辑 App' : '添加 App'}</h2>
 
-    <div class="block">
-      <div class="head">
-        <span class="title">网址</span>
-        {@render helpMark('填网站地址。输入完就会自动抓名称和图标。')}
-      </div>
+    <div class="block inline">
+      <button
+        type="button"
+        class="icon-btn ios-tile"
+        onclick={() => fileEl?.click()}
+        aria-label={snap.phase === 'scan' ? '正在获取' : snap.phase === 'success' ? '已获取' : '更换图标'}
+        aria-busy={snap.phase === 'scan'}
+        disabled={snap.phase !== 'idle'}
+      >
+        {#if preview && !imgFailed}
+          <img
+            src={preview}
+            alt=""
+            draggable="false"
+            class:dim={snap.phase !== 'idle'}
+            onerror={onPreviewError}
+          />
+        {:else}
+          <span class="ph" class:dim={snap.phase !== 'idle'}>{glyph}</span>
+        {/if}
+        {#if snap.phase === 'scan'}
+          <span class="faceid" aria-hidden="true">
+            <svg viewBox="0 0 64 64" width="40" height="40">
+              <circle class="faceid-track" cx="32" cy="32" r="22" />
+              <circle class="faceid-arc" cx="32" cy="32" r="22" />
+              <g class="faceid-mark" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+                <path stroke-width="2.4" d="M22 26V22h4" />
+                <path stroke-width="2.4" d="M42 22h4v4" />
+                <path stroke-width="2.4" d="M46 42v4h-4" />
+                <path stroke-width="2.4" d="M26 46h-4v-4" />
+                <ellipse cx="32" cy="33" rx="7.5" ry="9" stroke-width="2" />
+                <circle cx="29.2" cy="31.5" r="1.15" fill="#fff" stroke="none" />
+                <circle cx="34.8" cy="31.5" r="1.15" fill="#fff" stroke="none" />
+                <path stroke-width="1.8" d="M32 33.2v3.2" />
+              </g>
+            </svg>
+          </span>
+        {:else if snap.phase === 'success'}
+          <span class="ok" aria-hidden="true" out:fade={{ duration: 380 }}>
+            <svg viewBox="0 0 64 64" width="40" height="40">
+              <circle class="success-ring" cx="32" cy="32" r="22" />
+              <path
+                class="success-check"
+                fill="none"
+                stroke="#34c759"
+                stroke-width="3.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M20 33.5 28.5 42 44 24"
+              />
+            </svg>
+          </span>
+        {/if}
+      </button>
       <input
-        bind:this={urlEl}
-        value={snap.url}
-        oninput={(e) => draft.setUrl(e.currentTarget.value)}
-        placeholder="https://"
-        required
+        bind:this={fileEl}
+        class="sr"
+        type="file"
+        accept=".png,.jpg,.jpeg,.svg,.webp,image/*"
+        onchange={onFileChange}
+        tabindex="-1"
       />
-    </div>
-
-    <div class="block">
-      <div class="head">
-        <span class="title">名称</span>
-        {@render helpMark('显示在图标下面。自动抓到后也能改。')}
-      </div>
-      <input
-        value={snap.name}
-        oninput={(e) => draft.setName(e.currentTarget.value)}
-        placeholder="留空则用网站名"
-      />
-    </div>
-
-    <div class="block">
-      <div class="head">
-        <span class="title">图标</span>
-        {@render helpMark('可填图片地址，或点左侧从本地选图。')}
-      </div>
-      <div class="icon-row">
-        <button
-          type="button"
-          class="icon-btn ios-tile"
-          onclick={() => fileEl?.click()}
-          aria-label={snap.phase === 'scan' ? '正在获取' : snap.phase === 'success' ? '已获取' : '更换图标'}
-          aria-busy={snap.phase === 'scan'}
-          disabled={snap.phase !== 'idle'}
-        >
-          {#if preview && !imgFailed}
-            <img
-              src={preview}
-              alt=""
-              class:dim={snap.phase !== 'idle'}
-              onerror={() => {
-                imgFailed = true;
-              }}
-            />
-          {:else}
-            <span class="ph" class:dim={snap.phase !== 'idle'}>{glyph}</span>
-          {/if}
-          {#if snap.phase === 'scan'}
-            <span class="faceid" aria-hidden="true">
-              <svg viewBox="0 0 64 64" width="40" height="40">
-                <circle class="faceid-track" cx="32" cy="32" r="22" />
-                <circle class="faceid-arc" cx="32" cy="32" r="22" />
-                <g class="faceid-mark" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
-                  <path stroke-width="2.4" d="M22 26V22h4" />
-                  <path stroke-width="2.4" d="M42 22h4v4" />
-                  <path stroke-width="2.4" d="M46 42v4h-4" />
-                  <path stroke-width="2.4" d="M26 46h-4v-4" />
-                  <ellipse cx="32" cy="33" rx="7.5" ry="9" stroke-width="2" />
-                  <circle cx="29.2" cy="31.5" r="1.15" fill="#fff" stroke="none" />
-                  <circle cx="34.8" cy="31.5" r="1.15" fill="#fff" stroke="none" />
-                  <path stroke-width="1.8" d="M32 33.2v3.2" />
-                </g>
-              </svg>
-            </span>
-          {:else if snap.phase === 'success'}
-            <span class="ok" aria-hidden="true" out:fade={{ duration: 380 }}>
-              <svg viewBox="0 0 64 64" width="40" height="40">
-                <circle class="success-ring" cx="32" cy="32" r="22" />
-                <path
-                  class="success-check"
-                  fill="none"
-                  stroke="#34c759"
-                  stroke-width="3.2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M20 33.5 28.5 42 44 24"
-                />
-              </svg>
-            </span>
-          {/if}
-        </button>
-        <input
-          bind:this={fileEl}
-          class="sr"
-          type="file"
-          accept=".png,.jpg,.jpeg,.svg,.webp,image/*"
-          onchange={onFileChange}
-          tabindex="-1"
-        />
+      <div class="field">
         <input
           value={snap.iconField}
           oninput={(e) => draft.setIconField(e.currentTarget.value)}
           placeholder="自动获取，也可填链接"
         />
+        <span class="field-help">
+          {@render helpMark('点左边从本机选图，或把图片链接贴进来。自动抓到的留空就行。')}
+        </span>
+      </div>
+    </div>
+
+    <div class="block inline">
+      <div class="head">
+        <span class="title">网址</span>
+      </div>
+      <div class="field">
+        <input
+          bind:this={urlEl}
+          value={snap.url}
+          oninput={(e) => draft.setUrl(e.currentTarget.value)}
+          placeholder="https://"
+          required
+        />
+        <span class="field-help">
+          {@render helpMark('输入停住就会抓名称和图标，不必点出这个框。')}
+        </span>
+      </div>
+    </div>
+
+    <div class="block inline">
+      <div class="head">
+        <span class="title">名称</span>
+      </div>
+      <div class="field">
+        <input
+          value={snap.name}
+          oninput={(e) => draft.setName(e.currentTarget.value)}
+          placeholder="留空则用网站名"
+        />
+        <span class="field-help">
+          {@render helpMark('网格里图标底下那行字。留空用网站名，自动填的也能改。')}
+        </span>
       </div>
     </div>
 
@@ -276,29 +305,26 @@
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
     color: #f5f5f7;
-    padding: 0 1rem 1rem;
+    padding: 0.85rem 1rem 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.7rem;
     font-size: 0.9rem;
   }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.95rem 0 0.1rem;
-  }
   h2 {
     margin: 0;
-    flex: 1;
-    min-width: 0;
     font-size: 1rem;
     font-weight: 650;
     letter-spacing: -0.02em;
+    text-align: center;
+    padding: 0.15rem 2.2rem 0.1rem;
   }
   .close {
     appearance: none;
-    flex-shrink: 0;
+    position: absolute;
+    top: 0.7rem;
+    right: 0.85rem;
+    z-index: 2;
     margin: 0;
     border: 0;
     background: transparent;
@@ -311,15 +337,6 @@
   }
   .close:hover {
     opacity: 1;
-  }
-  .icon-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .icon-row input:not(.sr) {
-    flex: 1;
-    min-width: 0;
   }
   .icon-btn {
     appearance: none;
@@ -432,6 +449,32 @@
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.05);
   }
+  .block.inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .block.inline .head {
+    flex-shrink: 0;
+  }
+  .field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+  .field input:not(.sr) {
+    width: 100%;
+    padding-right: 1.9rem;
+  }
+  .field-help {
+    position: absolute;
+    right: 0.48rem;
+    top: 50%;
+    transform: translateY(-50%);
+    line-height: 0;
+    z-index: 1;
+  }
   .head {
     display: flex;
     align-items: center;
@@ -488,16 +531,16 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 1fr 0fr;
-    gap: 0;
+    grid-template-columns: 1fr minmax(0, 0fr);
+    column-gap: 0;
     margin-top: 0.15rem;
     transition:
-      grid-template-columns 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-      gap 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+      grid-template-columns 0.36s cubic-bezier(0.22, 1, 0.36, 1),
+      column-gap 0.36s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .row.ready {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
+    grid-template-columns: 1fr minmax(0, 1fr);
+    column-gap: 0.5rem;
   }
   .save-slot {
     min-width: 0;

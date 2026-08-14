@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyImportedState } from './importApply';
-import { createEmptyState, DEFAULT_SETTINGS, type YtabState } from './types';
+import { applyImportedState, holdFirstRun } from './importApply';
+import { createEmptyState, DEFAULT_SETTINGS, type AppItem, type YtabState } from './types';
+
+function app(id: string): AppItem {
+  return { id, kind: 'app', name: id, url: `https://${id}.example`, icon: '' };
+}
 
 describe('applyImportedState', () => {
   it('导入缺字段设置时补默认，并结束首次启动', () => {
@@ -65,6 +69,19 @@ describe('applyImportedState', () => {
       settings: { ...DEFAULT_SETTINGS, wallhavenKeyOk: true, wallhavenApiKey: 'abc' },
     });
     expect(ok.state.settings.wallhavenKeyOk).toBe(true);
+  });
+
+  it('扫描态 hold 保住 App，不把首次启动标成已完成', () => {
+    const { state } = applyImportedState({
+      ...createEmptyState(),
+      pages: [[app('a')]],
+    });
+    expect(state.onboardingDone).toBe(true);
+    expect(state.pages[0]).toHaveLength(1);
+
+    const held = holdFirstRun(state);
+    expect(held.onboardingDone).toBe(false);
+    expect(held.pages[0]).toEqual(state.pages[0]);
   });
 
   it('纯度/分类只收真正的 boolean，脏值回落默认字段', () => {

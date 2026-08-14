@@ -92,9 +92,21 @@ async function remakeBundle(state: YtabState, session: AccountSession): Promise<
   return encryptWithKey(await packPlain(state), key, b64ToBytes(session.salt), session.iter);
 }
 
-/** 网格或设置改完后防抖上传。未解开或未走完首次启动则不排。 */
+/** 丢掉防抖里那份。重置本机时必须叫：否则稍后仍会把重置前的网格（或空网格）传上去。 */
+export function cancelAccountBackup(): void {
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  pending = null;
+}
+
+/** 网格或设置改完后防抖上传。未解开或未走完首次启动则不排，并取消待传。 */
 export function scheduleAccountBackup(state: YtabState): void {
-  if (!state.onboardingDone) return;
+  if (!state.onboardingDone) {
+    cancelAccountBackup();
+    return;
+  }
   pending = state;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {

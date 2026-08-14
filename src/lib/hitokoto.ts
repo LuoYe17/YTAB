@@ -20,15 +20,22 @@ export function hitokotoFailNotice(reason: HitokotoFailReason): string {
   return '一言这次没给句子，稍后再试';
 }
 
-const HITOKOTO_URL = 'https://v1.hitokoto.cn/?encode=json';
 const HITOKOTO_TIMEOUT_MS = 8000;
 const HITOKOTO_TRIES = 3;
+
+/** 官方：同一参数短时间内边缘缓存同一句。浏览器 `no-store` 打不穿 CDN。https://developer.hitokoto.cn/sentence/ */
+function hitokotoUrl(): string {
+  const u = new URL('https://v1.hitokoto.cn/');
+  u.searchParams.set('encode', 'json');
+  u.searchParams.set('_', crypto.randomUUID());
+  return u.href;
+}
 
 async function fetchHitokotoOnce(): Promise<HitokotoFetchResult> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), HITOKOTO_TIMEOUT_MS);
   try {
-    const res = await fetch(HITOKOTO_URL, { signal: ac.signal, cache: 'no-store' });
+    const res = await fetch(hitokotoUrl(), { signal: ac.signal, cache: 'no-store' });
     if (res.status === 429) return { ok: false, reason: 'rateLimit' };
     // 5xx 等分不清限额和空包，不当成网络，避免用户去查自己的网。
     if (!res.ok) return { ok: false, reason: 'empty' };

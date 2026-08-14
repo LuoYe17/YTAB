@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { hitokotoFailNotice, type HitokotoFetchResult } from '../lib/hitokoto';
   import { plainNotice } from '../lib/notice';
 
@@ -21,15 +22,34 @@
   let fail = $state(false);
   let sx = $state(1);
   let ringOn = $state(false);
+  let swapGen = 0;
 
-  // 只跟 props 的 text/from；busy 翻回 false 时父级可能还没写回，不能用旧句盖掉刚刷到的。
+  // 点换自己管缩展。打开起始页：先画缓存句，新句到了再顺切，不硬切。
   $effect(() => {
-    shownText = text;
-    shownFrom = from;
+    const nextText = text;
+    const nextFrom = from;
+    if (busy) return;
+    const curText = untrack(() => shownText);
+    const curFrom = untrack(() => shownFrom);
+    if (curText === nextText && curFrom === nextFrom) return;
+    if (!curText) {
+      shownText = nextText;
+      shownFrom = nextFrom;
+      return;
+    }
+    const my = ++swapGen;
+    sx = 0;
+    void sleep(280).then(() => {
+      if (my !== swapGen) return;
+      shownText = nextText;
+      shownFrom = nextFrom;
+      sx = 1;
+    });
   });
 
   async function onClick() {
-    if (busy || !shownText) return;
+    if (busy || !shownText || sx !== 1) return;
+    swapGen += 1;
     busy = true;
     fail = false;
     sx = 0;

@@ -213,4 +213,69 @@ describe('applyFilter', () => {
     expect(result.settings.wallhavenTags).toEqual([]);
     expect(result.invalidatePool).toBe(true);
   });
+
+  it('关光标签且正停在相关则落到随机', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      wallhavenSorting: 'relevance' as const,
+      wallhavenTags: ['night'],
+    };
+    const result = applyFilter(settings, { type: 'tag', id: 'night', on: false });
+    expect(result.settings.wallhavenTags).toEqual([]);
+    expect(result.settings.wallhavenSorting).toBe('random');
+    expect(result.invalidatePool).toBe(true);
+  });
+
+  it('关掉分类若标签被清空且停在相关则落到随机', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      wallhavenSorting: 'relevance' as const,
+      wallhavenCategories: { general: true, anime: true, people: false },
+      wallhavenTags: ['anime girls'],
+    };
+    const result = applyFilter(settings, { type: 'category', key: 'anime', on: false });
+    expect(result.settings.wallhavenTags).toEqual([]);
+    expect(result.settings.wallhavenSorting).toBe('random');
+    expect(result.invalidatePool).toBe(true);
+  });
+
+  it('没标签时选相关仍落回随机', () => {
+    const result = applyFilter(DEFAULT_SETTINGS, { type: 'sorting', value: 'relevance' });
+    expect(result.settings.wallhavenSorting).toBe('random');
+    expect(result.invalidatePool).toBe(false);
+  });
+
+  it('从随机勾上第一个标签则改到相关', () => {
+    const result = applyFilter(DEFAULT_SETTINGS, { type: 'tag', id: 'night', on: true });
+    expect(result.settings.wallhavenTags).toEqual(['night']);
+    expect(result.settings.wallhavenSorting).toBe('relevance');
+    expect(result.invalidatePool).toBe(true);
+  });
+
+  it('从最新勾上第一个标签则改到相关', () => {
+    const settings = { ...DEFAULT_SETTINGS, wallhavenSorting: 'date_added' as const };
+    const result = applyFilter(settings, { type: 'tag', id: 'night', on: true });
+    expect(result.settings.wallhavenSorting).toBe('relevance');
+  });
+
+  it('热门、浏览、收藏勾标签不改排序', () => {
+    for (const sorting of ['toplist', 'views', 'favorites'] as const) {
+      const result = applyFilter(
+        { ...DEFAULT_SETTINGS, wallhavenSorting: sorting },
+        { type: 'tag', id: 'night', on: true },
+      );
+      expect(result.settings.wallhavenSorting).toBe(sorting);
+    }
+  });
+
+  it('已有标签时再勾一个，手动选的随机不抢回相关', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      wallhavenSorting: 'random' as const,
+      wallhavenTags: ['night'],
+    };
+    const result = applyFilter(settings, { type: 'tag', id: 'sakura', on: true });
+    expect(result.settings.wallhavenSorting).toBe('random');
+    expect(result.settings.wallhavenTags).toEqual(['night', 'sakura']);
+  });
 });

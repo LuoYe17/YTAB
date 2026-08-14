@@ -2,6 +2,7 @@
 
 import {
   DEFAULT_SETTINGS,
+  sortingForTagSet,
   type Settings,
   type WallhavenPurity,
   type WallhavenSorting,
@@ -167,7 +168,8 @@ function withPoolFlag(prev: Settings, next: Settings): FilterResult {
  * @param settings 当前设置
  * @param action 尺度 / 分类 / 标签 / 排序 / 密钥
  * @returns 关最后一项尺度或分类时 settings 原样，notice 为「尺度至少开一项」/「分类至少开一项」，invalidatePool 为 false。
- *   没密钥开「少儿不宜」与 `togglePurity` 一样无效。改分类会丢掉当前菜单里没有的已选标签。
+ *   没密钥开「少儿不宜」与 `togglePurity` 一样无效。改分类会丢掉当前菜单里没有的已选标签；标签因此空了且正停在「相关」则落到默认排序。
+ *   从零勾上第一个标签时，随机 / 最新改到相关；热门、浏览、收藏不改。
  *   invalidatePool 仅当尺度 / 分类 / 排序 / 标签真的变了（清空密钥若因此关了「少儿不宜」也算）。
  */
 export function applyFilter(settings: Settings, action: FilterAction): FilterResult {
@@ -193,10 +195,16 @@ export function applyFilter(settings: Settings, action: FilterAction): FilterRes
         action.key,
         action.on,
       );
+      const wallhavenTags = tagsAfterCategoriesChange(settings.wallhavenTags ?? [], wallhavenCategories);
       return withPoolFlag(settings, {
         ...settings,
         wallhavenCategories,
-        wallhavenTags: tagsAfterCategoriesChange(settings.wallhavenTags ?? [], wallhavenCategories),
+        wallhavenTags,
+        wallhavenSorting: sortingForTagSet(
+          settings.wallhavenSorting,
+          wallhavenTags,
+          settings.wallhavenTags ?? [],
+        ),
       });
     }
     case 'tag': {
@@ -206,10 +214,17 @@ export function applyFilter(settings: Settings, action: FilterAction): FilterRes
           ? cur
           : [...cur, action.id]
         : cur.filter((t) => t !== action.id);
-      return withPoolFlag(settings, { ...settings, wallhavenTags });
+      return withPoolFlag(settings, {
+        ...settings,
+        wallhavenTags,
+        wallhavenSorting: sortingForTagSet(settings.wallhavenSorting, wallhavenTags, cur),
+      });
     }
     case 'sorting':
-      return withPoolFlag(settings, { ...settings, wallhavenSorting: action.value });
+      return withPoolFlag(settings, {
+        ...settings,
+        wallhavenSorting: sortingForTagSet(action.value, settings.wallhavenTags ?? []),
+      });
     case 'setKey': {
       const nextHas = action.value.trim().length > 0;
       const next = {

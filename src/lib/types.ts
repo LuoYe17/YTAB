@@ -103,6 +103,24 @@ const SORTING: WallhavenSorting[] = [
   'toplist',
 ];
 
+/**
+ * 标签从无到有：随机 / 最新改到相关（热门、浏览、收藏本身质量好，不改）。
+ * 标签清空：相关改回默认排序，避免选中一项已经收起来的分段。
+ */
+export function sortingForTagSet(
+  sorting: WallhavenSorting,
+  nextTags: string[],
+  prevTags: string[] = nextTags,
+): WallhavenSorting {
+  if (nextTags.length === 0) {
+    return sorting === 'relevance' ? DEFAULT_SETTINGS.wallhavenSorting : sorting;
+  }
+  if (prevTags.length === 0 && (sorting === 'random' || sorting === 'date_added')) {
+    return 'relevance';
+  }
+  return sorting;
+}
+
 function realBool(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback;
 }
@@ -111,6 +129,12 @@ function realBool(v: unknown, fallback: boolean): boolean {
 export function mergeSettings(raw: Partial<Settings> | null | undefined): Settings {
   const s = raw ?? {};
   const wallhavenApiKey = typeof s.wallhavenApiKey === 'string' ? s.wallhavenApiKey : '';
+  const wallhavenTags = Array.isArray(s.wallhavenTags)
+    ? s.wallhavenTags.filter((t) => typeof t === 'string')
+    : [...DEFAULT_SETTINGS.wallhavenTags];
+  const sorting = SORTING.includes(s.wallhavenSorting as WallhavenSorting)
+    ? (s.wallhavenSorting as WallhavenSorting)
+    : DEFAULT_SETTINGS.wallhavenSorting;
   return {
     openTarget: s.openTarget === 'new' ? 'new' : 'current',
     bingEndpoint: s.bingEndpoint === 'www' ? 'www' : 'cn',
@@ -127,12 +151,8 @@ export function mergeSettings(raw: Partial<Settings> | null | undefined): Settin
       anime: realBool(s.wallhavenCategories?.anime, DEFAULT_SETTINGS.wallhavenCategories.anime),
       people: realBool(s.wallhavenCategories?.people, DEFAULT_SETTINGS.wallhavenCategories.people),
     },
-    wallhavenSorting: SORTING.includes(s.wallhavenSorting as WallhavenSorting)
-      ? (s.wallhavenSorting as WallhavenSorting)
-      : DEFAULT_SETTINGS.wallhavenSorting,
-    wallhavenTags: Array.isArray(s.wallhavenTags)
-      ? s.wallhavenTags.filter((t) => typeof t === 'string')
-      : [...DEFAULT_SETTINGS.wallhavenTags],
+    wallhavenSorting: sortingForTagSet(sorting, wallhavenTags),
+    wallhavenTags,
   };
 }
 

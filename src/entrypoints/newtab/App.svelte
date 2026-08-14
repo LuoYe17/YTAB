@@ -33,13 +33,10 @@
     type AppItem,
     type HitokotoState,
     type Settings,
-    type WallpaperState,
     type YtabState,
   } from '../../lib/types';
   import {
-    schedulePoolFill,
-    wallpaperPool,
-    wallpaperSession,
+    createWallpaperSurface,
     type WallpaperItem,
     type WallpaperPrepareResult,
   } from '../../lib/wallpaper';
@@ -66,6 +63,13 @@
   let passA = $state('');
   let passB = $state('');
   let passBusy = $state(false);
+
+  const wallpaper = createWallpaperSurface({
+    onDisplay: (url) => {
+      displayUrl = url;
+    },
+    persist: (wp) => persist((prev) => ({ ...prev, wallpaper: wp })),
+  });
 
   /** 文件夹里拖出来时落到主网格哪一格；壳已隐藏，落点带仍是整个 main。 */
   function readPageDropTarget(excludeId: string): PageDropTarget | null {
@@ -110,13 +114,11 @@
       return;
     }
     grid = createAppGridView(ytab.pages, 0);
-    displayUrl = ytab.wallpaper.imageUrl;
+    wallpaper.restore(ytab.wallpaper);
     ready = true;
     if (!ytab.onboardingDone) return;
     await refreshHitokoto();
-    await ensureWallpaper(false);
-    wallpaperPool.rememberCurrent(ytab.wallpaper.wallhavenId);
-    schedulePoolFill(ytab.settings);
+    await wallpaper.ensureDaily(ytab.settings, ytab.wallpaper);
   }
 
   async function retryLoad() {
@@ -133,22 +135,6 @@
     if (backupInterest(after) !== before) scheduleAccountBackup(after);
   }
 
-  async function persistWallpaper(item: WallpaperItem) {
-    const wp: WallpaperState = {
-      imageUrl: item.imageUrl,
-      fetchedOn: item.fetchedOn,
-      wallhavenId: item.wallhavenId,
-    };
-    await persist((prev) => ({ ...prev, wallpaper: wp }));
-    wallpaperPool.rememberCurrent(item.wallhavenId);
-  }
-
-  async function applyCommittedWallpaper(item: WallpaperItem) {
-    displayUrl = item.imageUrl;
-    await persistWallpaper(item);
-    schedulePoolFill(ytab.settings);
-  }
-
   async function refreshHitokoto() {
     const next = await fetchHitokoto();
     if (!next.ok) return;
@@ -162,25 +148,14 @@
     return next;
   }
 
-  async function ensureWallpaper(force: boolean) {
-    const result = await wallpaperSession.ensure(ytab.settings, ytab.wallpaper, force);
-    if (result.kind === 'keep') {
-      displayUrl = ytab.wallpaper.imageUrl;
-      return;
-    }
-    if (result.kind === 'switched') await applyCommittedWallpaper(result.item);
-  }
-
   /** 准备阶段：只拉取/解码，不上屏。 */
   function prepareWallpaperRefresh(): Promise<WallpaperPrepareResult> {
-    return wallpaperSession.prepare(ytab.settings);
+    return wallpaper.prepare(ytab.settings);
   }
 
-  /** 提交阶段：与绿勾同时上屏并落盘。 */
+  /** 提交阶段：上屏与绿勾同时，再等动画走完才交还按钮。 */
   async function commitWallpaperRefresh(): Promise<void> {
-    const item = wallpaperSession.commit();
-    if (!item) return;
-    await applyCommittedWallpaper(item);
+    await wallpaper.commit(ytab.settings);
     await sleep(450);
   }
 
@@ -222,11 +197,8 @@
       return next;
     });
     grid = createAppGridView(paginate(result.apps), 0);
-    if (result.wallpaper) {
-      displayUrl = result.wallpaper.imageUrl;
-      wallpaperPool.rememberCurrent(result.wallpaper.wallhavenId);
-    }
-    schedulePoolFill(ytab.settings);
+    // 没拿到图也要备池：这一开页后面还要「换一张」。
+    wallpaper.adopt(result.wallpaper, ytab.settings);
     const session = await loadSession();
     if (needsFirstPassphrase(session)) needPass = true;
   }
@@ -253,31 +225,30 @@
 
   async function onSettingsChange(settings: Settings, invalidatePool = false) {
     await persist((p) => ({ ...p, settings }));
-    if (invalidatePool) {
-      wallpaperPool.clear();
-      schedulePoolFill(settings);
-    }
+    if (invalidatePool) wallpaper.onFiltersChanged(settings);
   }
 
-  async function landImported(applied: ReturnType<typeof applyImportedState>) {
-    if (applied.invalidatePool) wallpaperPool.clear();
-    await persist(() => applied.state);
-    displayUrl = applied.displayUrl;
+  /** 整份换掉：落盘、关设置、重建网格。壁纸怎么接由调用方决定。 */
+  async function landState(next: YtabState) {
+    await persist(() => next);
     settingsOpen = false;
     settingsHighlight = null;
-    grid = createAppGridView(applied.state.pages, 0);
+    grid = createAppGridView(next.pages, 0);
   }
 
   async function onImportState(next: YtabState) {
-    const applied = applyImportedState(next);
-    await landImported(applied);
-    schedulePoolFill(applied.state.settings);
+    const { state } = applyImportedState(next);
+    await landState(state);
+    wallpaper.adopt(state.wallpaper, state.settings);
   }
 
   async function onResetAll() {
     await clearSession();
     needPass = false;
-    await landImported(applyImportedState(createEmptyState(), { endFirstRun: false }));
+    const { state } = applyImportedState(createEmptyState(), { endFirstRun: false });
+    await landState(state);
+    // 重置后人在首次启动界面，不该在后台替他拉壁纸。
+    wallpaper.forget();
     addOpen = false;
     editingApp = null;
     plainNotice('ok', '已重置');

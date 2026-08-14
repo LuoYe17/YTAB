@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, mergeSettings, type WallpaperState } from './types';
+import type { WallpaperFailReason } from './wallpaperFail';
 import {
   createWallpaperSession,
+  createWallpaperSurface,
   todayLocal,
   wallhavenSearchParams,
   type WallpaperItem,
@@ -126,5 +128,293 @@ describe('wallpaper session', () => {
     const result = await session.ensure(DEFAULT_SETTINGS, current, false);
     expect(cleared).toBe(1);
     expect(result).toEqual({ kind: 'switched', item: item('n') });
+  });
+});
+
+/** 假介质 + 假时钟 + 手动排期，好把预取池的日界与丢弃逻辑一起验证。 */
+function harness(startDay = '2026-08-13') {
+  const displayed: string[] = [];
+  const persisted: WallpaperState[] = [];
+  const scheduled: (() => Promise<void>)[] = [];
+  let day = startDay;
+  let seq = 0;
+  let fetches = 0;
+  let failNext: WallpaperFailReason | null = null;
+  let fixedId: string | null = null;
+  let persistFails = false;
+  let gate: Promise<void> | null = null;
+  let openGate: (() => void) | null = null;
+
+  const surface = createWallpaperSurface({
+    onDisplay: (url) => displayed.push(url),
+    persist: async (wp) => {
+      if (persistFails) throw new Error('disk down');
+      persisted.push(wp);
+    },
+    fetch: async () => {
+      fetches += 1;
+      if (gate) await gate;
+      if (failNext) {
+        const reason = failNext;
+        failNext = null;
+        return { ok: false, reason };
+      }
+      seq += 1;
+      const id = fixedId ?? `id${seq}`;
+      return { ok: true, item: { imageUrl: `data:${id}`, wallhavenId: id, fetchedOn: day } };
+    },
+    decode: async () => {},
+    today: () => day,
+    schedule: (run) => scheduled.push(run),
+  });
+
+  return {
+    surface,
+    displayed,
+    persisted,
+    shown: () => displayed.at(-1),
+    fetches: () => fetches,
+    setDay: (d: string) => {
+      day = d;
+    },
+    failOnce: (reason: WallpaperFailReason) => {
+      failNext = reason;
+    },
+    alwaysSameId: (id: string) => {
+      fixedId = id;
+    },
+    breakPersist: () => {
+      persistFails = true;
+    },
+    /** 卡住取图，用来制造「预取还在路上」 */
+    holdFetch: () => {
+      gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+    },
+    releaseFetch: async () => {
+      openGate?.();
+      gate = null;
+      openGate = null;
+      await new Promise((r) => setTimeout(r, 0));
+    },
+    /** 跑掉排队的预取（生产走 idle callback） */
+    settleFills: async () => {
+      for (const job of scheduled.splice(0)) await job();
+    },
+    /** 只启动排队的预取，不等它完成 */
+    startFills: () => scheduled.splice(0).map((job) => job()),
+  };
+}
+
+function stored(imageUrl: string, fetchedOn: string, id = 'cur'): WallpaperState {
+  return { imageUrl, fetchedOn, wallhavenId: id };
+}
+
+describe('wallpaper surface', () => {
+  it('同一天不换图，也不落盘', async () => {
+    const h = harness();
+    await h.surface.ensureDaily(DEFAULT_SETTINGS, stored('data:old', '2026-08-13'));
+
+    expect(h.shown()).toBe('data:old');
+    expect(h.persisted).toHaveLength(0);
+    expect(h.fetches()).toBe(0);
+  });
+
+  it('跨日换图：上屏、落盘三项齐全', async () => {
+    const h = harness();
+    await h.surface.ensureDaily(DEFAULT_SETTINGS, stored('data:old', '2026-08-12'));
+
+    expect(h.shown()).toBe('data:id1');
+    expect(h.persisted).toEqual([
+      { imageUrl: 'data:id1', fetchedOn: '2026-08-13', wallhavenId: 'id1' },
+    ]);
+  });
+
+  it('跨日先作废旧池，不拿昨天的预取图上屏', async () => {
+    const h = harness();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+    const prefetched = h.fetches();
+
+    h.setDay('2026-08-14');
+    await h.surface.ensureDaily(DEFAULT_SETTINGS, stored('data:old', '2026-08-13'));
+
+    expect(h.fetches()).toBe(prefetched + 1);
+    expect(h.shown()).toBe(`data:id${prefetched + 1}`);
+  });
+
+  it('日更失败则维持原图，不落盘', async () => {
+    const h = harness();
+    h.failOnce('network');
+    await h.surface.ensureDaily(DEFAULT_SETTINGS, stored('data:old', '2026-08-12'));
+
+    expect(h.shown()).toBe('data:old');
+    expect(h.persisted).toHaveLength(0);
+  });
+
+  it('准备阶段只解码不上屏，提交才上屏落盘', async () => {
+    const h = harness();
+    h.surface.restore(stored('data:old', '2026-08-13'));
+
+    expect(await h.surface.prepare(DEFAULT_SETTINGS)).toEqual({ ok: true });
+    expect(h.shown()).toBe('data:old');
+    expect(h.persisted).toHaveLength(0);
+
+    await h.surface.commit(DEFAULT_SETTINGS);
+    expect(h.shown()).toBe('data:id1');
+    expect(h.persisted).toHaveLength(1);
+  });
+
+  it('准备期间再点返回 busy', async () => {
+    const h = harness();
+    const first = h.surface.prepare(DEFAULT_SETTINGS);
+    expect(await h.surface.prepare(DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'busy' });
+    expect(await first).toEqual({ ok: true });
+  });
+
+  it('准备失败原样返回，不上屏不落盘', async () => {
+    const h = harness();
+    h.failOnce('empty');
+
+    expect(await h.surface.prepare(DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'empty' });
+    expect(h.displayed).toHaveLength(0);
+    await h.surface.commit(DEFAULT_SETTINGS);
+    expect(h.persisted).toHaveLength(0);
+  });
+
+  it('落盘失败要抛出去：图已上屏，咽下去下次打开就变回旧图', async () => {
+    const h = harness();
+    await h.surface.prepare(DEFAULT_SETTINGS);
+    h.breakPersist();
+
+    await expect(h.surface.commit(DEFAULT_SETTINGS)).rejects.toThrow();
+    expect(h.shown()).toBe('data:id1');
+  });
+
+  it('改筛选：清池重新预取，但不动上屏', async () => {
+    const h = harness();
+    h.surface.restore(stored('data:old', '2026-08-13'));
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+
+    expect(h.shown()).toBe('data:old');
+    expect(h.persisted).toHaveLength(0);
+    expect(h.fetches()).toBeGreaterThan(0);
+  });
+
+  it('导入 / 首启落地：上屏并接管预取，整份状态由调用方落盘', async () => {
+    const h = harness();
+    h.surface.adopt({ imageUrl: 'data:imported', wallhavenId: 'imp' }, DEFAULT_SETTINGS);
+
+    expect(h.shown()).toBe('data:imported');
+    expect(h.persisted).toHaveLength(0);
+    await h.settleFills();
+    expect(h.fetches()).toBeGreaterThan(0);
+  });
+
+  it('落地会丢掉旧池，换图不会端出上一份筛选的存货', async () => {
+    const h = harness();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+    const beforeAdopt = h.fetches();
+
+    h.surface.adopt({ imageUrl: 'data:imported', wallhavenId: 'imp' }, DEFAULT_SETTINGS);
+    await h.surface.prepare(DEFAULT_SETTINGS);
+    await h.surface.commit(DEFAULT_SETTINGS);
+
+    expect(h.shown()).toBe(`data:id${beforeAdopt + 1}`);
+  });
+
+  it('池里有货就直接用，不再发请求', async () => {
+    const h = harness();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+    const filled = h.fetches();
+
+    await h.surface.prepare(DEFAULT_SETTINGS);
+    expect(h.fetches()).toBe(filled);
+    await h.surface.commit(DEFAULT_SETTINGS);
+    expect(h.shown()).toBe('data:id1');
+  });
+
+  it('预取满 3 张即停', async () => {
+    const h = harness();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+
+    expect(h.fetches()).toBe(3);
+  });
+
+  it('跨了一天，池里昨天的存货作废', async () => {
+    const h = harness();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+    const filled = h.fetches();
+
+    // 不走日更，直接手动换一张：取货这一步自己会发现换天了
+    h.setDay('2026-08-14');
+    await h.surface.prepare(DEFAULT_SETTINGS);
+    await h.surface.commit(DEFAULT_SETTINGS);
+
+    expect(h.fetches()).toBe(filled + 1);
+    expect(h.shown()).toBe(`data:id${filled + 1}`);
+  });
+
+  it('改筛选后，还在路上的预取结果被丢掉', async () => {
+    const h = harness();
+    h.holdFetch();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    const inflight = h.startFills();
+    expect(h.fetches()).toBe(1);
+
+    // 用户又改了筛选：这批货是按旧条件拉的，不能要
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.releaseFetch();
+    await Promise.all(inflight);
+    await h.settleFills();
+
+    // 池里只能是第二轮拉的；第一轮那张不该被端上来
+    await h.surface.prepare(DEFAULT_SETTINGS);
+    await h.surface.commit(DEFAULT_SETTINGS);
+    expect(h.shown()).not.toBe('data:id1');
+  });
+
+  it('重置本机：清掉上屏与旧池，且不在首启界面偷偷预取', async () => {
+    const h = harness();
+    h.surface.onFiltersChanged(DEFAULT_SETTINGS);
+    await h.settleFills();
+    const filled = h.fetches();
+
+    h.surface.forget();
+    await h.settleFills();
+
+    expect(h.shown()).toBe('');
+    expect(h.fetches()).toBe(filled);
+  });
+
+  it('首次启动没拿到图，也要把池子备起来', async () => {
+    const h = harness();
+    h.surface.adopt(null, DEFAULT_SETTINGS);
+    await h.settleFills();
+
+    expect(h.displayed).toHaveLength(0);
+    expect(h.fetches()).toBeGreaterThan(0);
+  });
+
+  it('看过的图不再入池，也不会把预取卡死', async () => {
+    const h = harness();
+    h.alwaysSameId('dup');
+    await h.surface.ensureDaily(DEFAULT_SETTINGS, stored('data:old', '2026-08-12'));
+    const afterLand = h.fetches();
+    await h.settleFills();
+
+    // 每张都是看过的 id，池仍是空的；guard 兜住，不会无限拉
+    expect(h.fetches()).toBeGreaterThan(afterLand);
+    expect(h.fetches()).toBeLessThanOrEqual(afterLand + 12);
+
+    const before = h.fetches();
+    await h.surface.prepare(DEFAULT_SETTINGS);
+    expect(h.fetches()).toBe(before + 1);
   });
 });

@@ -36,9 +36,9 @@ export function todayLocal(): string {
   return `${y}-${m}-${day}`;
 }
 
-export function needsDailyWallpaper(wallpaper: WallpaperState): boolean {
+export function needsDailyWallpaper(wallpaper: WallpaperState, today = todayLocal()): boolean {
   if (!wallpaper.imageUrl) return true;
-  return wallpaper.fetchedOn !== todayLocal();
+  return wallpaper.fetchedOn !== today;
 }
 
 /** Wallhaven rejects purity=000; fall back to SFW-only. */
@@ -185,7 +185,7 @@ export async function fetchRandomWallpaper(
   }
 }
 
-/** In-memory prefetch pool (not persisted). */
+/** In-memory prefetch pool (not persisted). 由 surface 持有；日界与取图都经注入口，便于整条验证。 */
 class WallpaperPool {
   private items: WallpaperItem[] = [];
   private day = '';
@@ -194,8 +194,15 @@ class WallpaperPool {
   /** Bumped on clear / filter change so in-flight fills discard results. */
   private epoch = 0;
 
+  constructor(
+    private deps: {
+      fetch: (settings: Settings) => Promise<WallpaperAcquireResult>;
+      today: () => string;
+    },
+  ) {}
+
   invalidateIfNewDay(): void {
-    const t = todayLocal();
+    const t = this.deps.today();
     if (this.day && this.day !== t) {
       this.items = [];
       this.seenIds.clear();
@@ -207,7 +214,7 @@ class WallpaperPool {
   clear(): void {
     this.items = [];
     this.seenIds.clear();
-    this.day = todayLocal();
+    this.day = this.deps.today();
     this.epoch++;
   }
 
@@ -218,10 +225,6 @@ class WallpaperPool {
   take(): WallpaperItem | null {
     this.invalidateIfNewDay();
     return this.items.shift() ?? null;
-  }
-
-  size(): number {
-    return this.items.length;
   }
 
   async fill(settings: Settings, target = POOL_SIZE): Promise<void> {
@@ -237,7 +240,7 @@ class WallpaperPool {
       while (this.items.length < target && guard < target * 4) {
         if (this.epoch !== epochAtStart) return;
         guard++;
-        const got = await fetchRandomWallpaper(settings);
+        const got = await this.deps.fetch(settings);
         if (this.epoch !== epochAtStart) return;
         if (!got.ok) break;
         if (this.seenIds.has(got.item.wallhavenId)) continue;
@@ -248,21 +251,6 @@ class WallpaperPool {
       this.filling = null;
     });
     return this.filling;
-  }
-}
-
-export const wallpaperPool = new WallpaperPool();
-
-export function schedulePoolFill(settings: Settings): void {
-  const run = () => {
-    void wallpaperPool.fill(settings, POOL_SIZE).catch(() => {
-      /* 预取失败不挡起始页 */
-    });
-  };
-  if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(() => run(), { timeout: 4000 });
-  } else {
-    setTimeout(run, 800);
   }
 }
 
@@ -280,6 +268,8 @@ export type WallpaperSessionDeps = {
   decode: (src: string) => Promise<void>;
   /** 日更前丢掉旧池，避免过期过滤条件的预取图。 */
   beforeDaily?: () => void;
+  /** 本地自然日；与池、`fetchedOn` 必须用同一把尺。 */
+  today?: () => string;
 };
 
 /**
@@ -328,7 +318,9 @@ export function createWallpaperSession(deps: WallpaperSessionDeps) {
     current: WallpaperState,
     force: boolean,
   ): Promise<WallpaperEnsureResult> {
-    if (!force && !needsDailyWallpaper(current)) return { kind: 'keep' };
+    if (!force && !needsDailyWallpaper(current, (deps.today ?? todayLocal)())) {
+      return { kind: 'keep' };
+    }
     deps.beforeDaily?.();
     const item = await refresh(settings);
     return item ? { kind: 'switched', item } : { kind: 'failed' };
@@ -354,14 +346,130 @@ function decodeWallpaperImage(src: string): Promise<void> {
   });
 }
 
-function acquireFromPoolOrFetch(settings: Settings): Promise<WallpaperAcquireResult> {
-  const pooled = wallpaperPool.take();
-  return pooled ? Promise.resolve({ ok: true, item: pooled }) : fetchRandomWallpaper(settings);
+/** 生产排期：空闲时补池，别和首屏抢。 */
+function idleSchedule(run: () => Promise<void>): void {
+  const start = () => {
+    void run().catch(() => {
+      /* 预取失败不挡起始页 */
+    });
+  };
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(() => start(), { timeout: 4000 });
+  } else {
+    setTimeout(start, 800);
+  }
 }
 
-/** 起始页用的换图会话：取池或拉取、解码；上屏与 persist 仍由 App 做。 */
-export const wallpaperSession = createWallpaperSession({
-  acquire: acquireFromPoolOrFetch,
-  decode: decodeWallpaperImage,
-  beforeDaily: () => wallpaperPool.clear(),
-});
+export type WallpaperSurfaceDeps = {
+  /** 上屏 URL 变了；起始页据此换背景。 */
+  onDisplay: (imageUrl: string) => void;
+  /** 落盘一份壁纸状态。surface 不认识 chrome.storage，也不管账号备份。 */
+  persist: (wallpaper: WallpaperState) => Promise<void>;
+  fetch?: (settings: Settings) => Promise<WallpaperAcquireResult>;
+  decode?: (src: string) => Promise<void>;
+  /** 本地自然日；池的日界与 `fetchedOn` 必须用同一把尺。 */
+  today?: () => string;
+  schedule?: (run: () => Promise<void>) => void;
+};
+
+/**
+ * 壁纸上屏面：日更、手动换图、改筛选、导入 / 首启落地，全部经此一处。
+ *
+ * 内部持有预取池与换图会话；调用方只需说发生了什么，不必再各自拼
+ * 「上屏 + 落盘 + 记 id + 清池 / 补池」。落盘失败会原样抛给调用方——
+ * 图已经上屏，吞掉的话下次打开就变回旧图且无人知情。
+ */
+export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
+  const fetchOne = deps.fetch ?? fetchRandomWallpaper;
+  const today = deps.today ?? todayLocal;
+  const schedule = deps.schedule ?? idleSchedule;
+  const pool = new WallpaperPool({ fetch: fetchOne, today });
+
+  const session = createWallpaperSession({
+    acquire: (settings) => {
+      const pooled = pool.take();
+      return pooled ? Promise.resolve({ ok: true, item: pooled }) : fetchOne(settings);
+    },
+    decode: deps.decode ?? decodeWallpaperImage,
+    beforeDaily: () => pool.clear(),
+    today,
+  });
+
+  function refill(settings: Settings): void {
+    schedule(() => pool.fill(settings, POOL_SIZE));
+  }
+
+  function keepShowing(current: WallpaperState, settings: Settings): void {
+    deps.onDisplay(current.imageUrl);
+    pool.rememberCurrent(current.wallhavenId);
+    refill(settings);
+  }
+
+  async function land(item: WallpaperItem, settings: Settings): Promise<void> {
+    deps.onDisplay(item.imageUrl);
+    await deps.persist({
+      imageUrl: item.imageUrl,
+      fetchedOn: item.fetchedOn,
+      wallhavenId: item.wallhavenId,
+    });
+    pool.rememberCurrent(item.wallhavenId);
+    refill(settings);
+  }
+
+  return {
+    /** 打开起始页：先把已存的图放上屏，不发请求。 */
+    restore(current: WallpaperState): void {
+      deps.onDisplay(current.imageUrl);
+    },
+
+    /** 按本地自然日换图；同日维持现状，失败也维持现状。 */
+    async ensureDaily(settings: Settings, current: WallpaperState): Promise<void> {
+      const result = await session.ensure(settings, current, false);
+      if (result.kind === 'switched') {
+        await land(result.item, settings);
+        return;
+      }
+      keepShowing(current, settings);
+    },
+
+    /** 手动换一张的准备阶段：拉取并解码，不上屏。 */
+    prepare(settings: Settings): Promise<WallpaperPrepareResult> {
+      return session.prepare(settings);
+    },
+
+    /** 手动换一张的提交阶段：与绿勾同时上屏并落盘。 */
+    async commit(settings: Settings): Promise<void> {
+      const item = session.commit();
+      if (!item) return;
+      await land(item, settings);
+    },
+
+    /** 筛选条件变了：旧池作废并重新预取，不动上屏。 */
+    onFiltersChanged(settings: Settings): void {
+      pool.clear();
+      refill(settings);
+    },
+
+    /**
+     * 外面已经拿到一张（首次启动 / 导入）：上屏并接管后续预取。
+     * 整份状态由调用方落盘，这里不重复写。传 null 表示那边没拿到图，
+     * 上屏不动，但池子照样备起来。
+     */
+    adopt(item: { imageUrl: string; wallhavenId?: string } | null, settings: Settings): void {
+      pool.clear();
+      if (item) {
+        deps.onDisplay(item.imageUrl);
+        pool.rememberCurrent(item.wallhavenId);
+      }
+      refill(settings);
+    },
+
+    /** 重置本机：清空上屏与旧池，且不补池——用户这会儿在首次启动界面。 */
+    forget(): void {
+      pool.clear();
+      deps.onDisplay('');
+    },
+  };
+}
+
+export type WallpaperSurface = ReturnType<typeof createWallpaperSurface>;

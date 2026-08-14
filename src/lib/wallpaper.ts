@@ -557,5 +557,3 @@ export function createWallpaperSurface(deps: WallpaperSurfaceDeps) {
     },
   };
 }
-
-export type WallpaperSurface = ReturnType<typeof createWallpaperSurface>;

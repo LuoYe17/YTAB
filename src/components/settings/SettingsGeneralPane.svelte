@@ -23,9 +23,9 @@
   }
 </script>
 
-<div class="block inline">
-  <div class="head">
-    <span id="lbl-open" class="title">打开方式</span>
+<div class="st-block st-inline">
+  <div class="st-head">
+    <span id="lbl-open" class="st-title">打开方式</span>
     {@render helpMark('点 App 时用当前这一页打开，还是另开一个标签。搜索框和页脚链接不受影响。')}
   </div>
   <SegmentedControl
@@ -38,9 +38,9 @@
     onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
   />
 </div>
-<div class="block inline">
-  <div class="head">
-    <span id="lbl-bing" class="title">搜索地区</span>
+<div class="st-block st-inline">
+  <div class="st-head">
+    <span id="lbl-bing" class="st-title">搜索地区</span>
     {@render helpMark('搜索框用国内 Bing 还是国际 Bing。国内更贴中文结果。')}
   </div>
   <SegmentedControl
@@ -54,37 +54,7 @@
   />
 </div>
 {#if showReset}
-  <div class="block">
+  <div class="st-block">
     {@render resetRow()}
   </div>
 {/if}
-
-<style>
-  .block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.7rem 0.8rem;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .block.inline {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-  .block.inline .head {
-    flex-wrap: nowrap;
-    flex-shrink: 0;
-  }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.22rem 0.5rem;
-  }
-  .title {
-    font-weight: 600;
-  }
-</style>

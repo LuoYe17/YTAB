@@ -71,9 +71,9 @@
   </svg>
 {/snippet}
 
-<div class="block fold-card">
+<div class="st-block fold-card">
   <div
-    class="head fold"
+    class="st-head st-fold"
     role="button"
     tabindex="0"
     aria-expanded={wallhavenOpen}
@@ -93,12 +93,12 @@
       <a class="wh-home" href={SITE_URL} target="_blank" rel="noreferrer" aria-label="打开 Wallhaven 官网">
         {@render wallhavenMark()}
       </a>
-      <span class="title">Wallhaven</span>
+      <span class="st-title">Wallhaven</span>
     </span>
-    <span class="fold-help">
+    <span class="st-fold-help">
       {@render helpMark('拉壁纸用的站。密钥选填；尺度、分类、标签都在这里。')}
     </span>
-    <span class="chev" class:open={wallhavenOpen} aria-hidden="true">
+    <span class="st-chev" class:open={wallhavenOpen} aria-hidden="true">
       <svg viewBox="0 0 16 16" width="14" height="14">
         <path
           fill="none"
@@ -111,7 +111,7 @@
       </svg>
     </span>
   </div>
-  <div class="fold-body" class:open={wallhavenOpen} use:foldMax={wallhavenOpen}>
+  <div class="st-fold-body" class:open={wallhavenOpen} use:foldMax={wallhavenOpen}>
     <div class="fold-clip">
       <SettingsWallhavenKey
         {settings}
@@ -131,43 +131,17 @@
 </div>
 
 <style>
-  .block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.7rem 0.8rem;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-  }
   .fold-card {
     gap: 0;
     padding: 0;
     overflow: hidden;
   }
-  .fold-card > .head.fold {
+  .fold-card > .st-head.st-fold {
     position: relative;
     z-index: 1;
     padding: 0.58rem 0.75rem;
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.04);
-  }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.22rem 0.5rem;
-  }
-  .title {
-    font-weight: 600;
-  }
-  .head.fold {
-    width: 100%;
-    cursor: pointer;
-    border-radius: 8px;
-    user-select: none;
-  }
-  .head.fold:hover {
-    background: rgba(255, 255, 255, 0.05);
   }
   .fold-brand {
     display: inline-flex;
@@ -175,7 +149,7 @@
     gap: 0.4rem;
     min-width: 0;
   }
-  .fold-brand .title {
+  .fold-brand .st-title {
     line-height: 1;
   }
   .wh-home {
@@ -206,32 +180,6 @@
     height: 1em;
     overflow: hidden;
     border-radius: 0.28em;
-  }
-  .fold-help {
-    display: inline-flex;
-  }
-  .chev {
-    margin-left: auto;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    color: rgba(255, 255, 255, 0.55);
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    pointer-events: none;
-  }
-  .chev svg {
-    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  .chev.open svg {
-    transform: rotate(180deg);
-  }
-  .fold-body {
-    overflow: hidden;
-    max-height: 0;
-    transition-property: max-height;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
   .fold-clip {
     display: flex;

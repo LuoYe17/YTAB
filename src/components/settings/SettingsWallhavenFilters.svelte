@@ -41,9 +41,9 @@
 </script>
 
 <div class="filters">
-  <div class="wh-row" class:glow={glowFilters}>
-    <div class="head">
-      <span class="title">尺度</span>
+  <div class="wh-row" class:st-glow={glowFilters}>
+    <div class="st-head">
+      <span class="st-title">尺度</span>
       {@render helpMark('想看少儿不宜的图。至少留一项。没密钥不能开「少儿不宜」。')}
     </div>
     <div class="caps tight">
@@ -68,9 +68,9 @@
       />
     </div>
   </div>
-  <div class="wh-row" class:glow={glowFilters}>
-    <div class="head">
-      <span class="title">分类</span>
+  <div class="wh-row" class:st-glow={glowFilters}>
+    <div class="st-head">
+      <span class="st-title">分类</span>
       {@render helpMark('壁纸属于哪一类。至少留一项。')}
     </div>
     <div class="caps tight">
@@ -95,8 +95,8 @@
     </div>
   </div>
   <div class="wh-row">
-    <div class="head">
-      <span id="wallpaper-sorting" class="title">排序</span>
+    <div class="st-head">
+      <span id="wallpaper-sorting" class="st-title">排序</span>
       {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签才出现「相关」；从随机或最新勾上第一个标签会改到相关。')}
     </div>
     <SegmentedControl
@@ -108,7 +108,7 @@
     />
   </div>
   <div
-    class="head fold"
+    class="st-head st-fold"
     role="button"
     tabindex="0"
     aria-expanded={tagsOpen}
@@ -124,11 +124,11 @@
       tagsOpen = !tagsOpen;
     }}
   >
-    <span class="title">标签</span>
-    <span class="fold-help">
+    <span class="st-title">标签</span>
+    <span class="st-fold-help">
       {@render helpMark('可选。跟着上面分类换。多选一起搜，全关就不限题材。')}
     </span>
-    <span class="chev" class:open={tagsOpen} aria-hidden="true">
+    <span class="st-chev" class:open={tagsOpen} aria-hidden="true">
       <svg viewBox="0 0 16 16" width="14" height="14">
         <path
           fill="none"
@@ -141,7 +141,7 @@
       </svg>
     </span>
   </div>
-  <div class="fold-body" class:open={tagsOpen} use:foldMax={tagsOpen}>
+  <div class="st-fold-body" class:open={tagsOpen} use:foldMax={tagsOpen}>
     <div class="caps fill">
       {#each tagPresets as tag (tag.id)}
         <CapsuleSwitch
@@ -174,50 +174,6 @@
     flex: 1;
     min-width: 0;
   }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.22rem 0.5rem;
-  }
-  .title {
-    font-weight: 600;
-  }
-  .head.fold {
-    width: 100%;
-    cursor: pointer;
-    border-radius: 8px;
-    user-select: none;
-  }
-  .head.fold:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .fold-help {
-    display: inline-flex;
-  }
-  .chev {
-    margin-left: auto;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    color: rgba(255, 255, 255, 0.55);
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    pointer-events: none;
-  }
-  .chev svg {
-    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  .chev.open svg {
-    transform: rotate(180deg);
-  }
-  .fold-body {
-    overflow: hidden;
-    max-height: 0;
-    transition-property: max-height;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  }
   .caps {
     display: flex;
     flex-wrap: wrap;
@@ -227,17 +183,5 @@
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 0.4rem;
-  }
-  .glow {
-    box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.85);
-    animation: glow-fade 1.5s ease forwards;
-  }
-  @keyframes glow-fade {
-    0% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.95);
-    }
-    100% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
-    }
   }
 </style>

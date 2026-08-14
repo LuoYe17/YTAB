@@ -33,21 +33,21 @@
 </script>
 
 {#if !session}
-  <div class="block inline">
-    <div class="head">
-      <span class="title">云端备份</span>
+  <div class="st-block st-inline">
+    <div class="st-head">
+      <span class="st-title">云端备份</span>
       {@render helpMark('登录后改完自己传到云端。卸扩展或换机再登录，用恢复口令解开。可以不登。传到云端的是加密后的整份，服务器只见密文。口令忘了只能删掉重来。')}
     </div>
-    <button type="button" class="action with-mark" disabled={accountBusy} onclick={onLogin}>
+    <button type="button" class="st-action with-mark" disabled={accountBusy} onclick={onLogin}>
       {@render githubMark()}
       {accountBusy ? '登录中…' : '用 GitHub 登录'}
     </button>
   </div>
 {:else if session}
-  <div class="block">
-    <div class="inline-row">
-      <div class="head">
-        <span class="title">云端备份</span>
+  <div class="st-block">
+    <div class="st-inline-row">
+      <div class="st-head">
+        <span class="st-title">云端备份</span>
         {@render helpMark('改完会自己传。后写盖住先写。传到云端的是加密后的整份，服务器只见密文。退出后本机留下，不再上传。')}
       </div>
       <span class="when">
@@ -62,30 +62,30 @@
     </div>
     <div class="acts">
       {#if unlocked}
-        <button type="button" class="ghost" disabled={accountBusy} onclick={() => onOpenSheet('change')}>
+        <button type="button" class="st-ghost" disabled={accountBusy} onclick={() => onOpenSheet('change')}>
           改口令
         </button>
       {:else if session.hasBackup !== false}
-        <button type="button" class="action" disabled={accountBusy} onclick={() => onOpenSheet('unlock')}>
+        <button type="button" class="st-action" disabled={accountBusy} onclick={() => onOpenSheet('unlock')}>
           解开
         </button>
       {:else}
-        <button type="button" class="action" disabled={accountBusy} onclick={() => onOpenSheet('set')}>
+        <button type="button" class="st-action" disabled={accountBusy} onclick={() => onOpenSheet('set')}>
           设口令
         </button>
       {/if}
-      <button type="button" class="ghost" disabled={accountBusy} onclick={onLogout}>退出</button>
+      <button type="button" class="st-ghost" disabled={accountBusy} onclick={onLogout}>退出</button>
     </div>
   </div>
 {/if}
-<div class="block">
+<div class="st-block">
   {#if session}
-    <div class="inline-row">
-      <div class="head">
-        <span class="title">删除云端</span>
+    <div class="st-inline-row">
+      <div class="st-head">
+        <span class="st-title">删除云端</span>
         {@render helpMark('只丢掉服务器上的密文。本机不动。')}
       </div>
-      <button type="button" class="danger" disabled={accountBusy} onclick={() => onOpenSheet('delete')}>
+      <button type="button" class="st-danger" disabled={accountBusy} onclick={() => onOpenSheet('delete')}>
         删除
       </button>
     </div>
@@ -94,36 +94,9 @@
 </div>
 
 <style>
-  .block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.7rem 0.8rem;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .block.inline {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-  .block.inline .head {
-    flex-wrap: nowrap;
-    flex-shrink: 0;
-  }
-  .block.inline .action {
+  .st-block.st-inline .st-action {
     align-self: center;
     flex-shrink: 0;
-  }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.22rem 0.5rem;
-  }
-  .title {
-    font-weight: 600;
   }
   .when {
     margin: 0;
@@ -131,60 +104,18 @@
     font-size: 0.78rem;
     flex-shrink: 0;
   }
-  .inline-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
   .acts {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 0.4rem;
   }
-  .action,
-  .danger,
-  .ghost {
-    appearance: none;
-    border: 0;
-    align-self: flex-start;
-    border-radius: 8px;
-    padding: 0.45rem 0.9rem;
-    cursor: pointer;
-    font: inherit;
-    transition:
-      background 0.15s ease,
-      transform 0.15s ease;
-  }
-  .action {
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
-  }
-  .action.with-mark {
+  .st-action.with-mark {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
   }
-  .action.with-mark :global(svg) {
+  .st-action.with-mark :global(svg) {
     flex-shrink: 0;
-  }
-  .action:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.24);
-  }
-  .action:disabled {
-    opacity: 0.6;
-  }
-  .danger {
-    background: #ff3b30;
-    color: #fff;
-  }
-  .danger:hover {
-    background: #e0352b;
-  }
-  .ghost {
-    background: transparent;
-    color: inherit;
-    border: 1px solid rgba(255, 255, 255, 0.16);
   }
 </style>

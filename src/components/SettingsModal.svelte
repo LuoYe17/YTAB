@@ -24,6 +24,7 @@
   import SettingsGeneralPane from './settings/SettingsGeneralPane.svelte';
   import SettingsNav from './settings/SettingsNav.svelte';
   import SettingsWallpaperPane from './settings/SettingsWallpaperPane.svelte';
+  import './settings/settingsChrome.css';
 
   type Tab = 'general' | 'wallpaper' | 'account';
   type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
@@ -261,12 +262,12 @@
 {/snippet}
 
 {#snippet resetRow()}
-  <div class="inline-row">
-    <div class="head">
-      <span class="title">重置本机</span>
+  <div class="st-inline-row">
+    <div class="st-head">
+      <span class="st-title">重置本机</span>
       {@render helpMark('清掉本机全部数据，回到第一次打开。此设备登录会忘掉。云端还在。')}
     </div>
-    <button type="button" class="danger" onclick={() => (sheet = 'reset')}>重置</button>
+    <button type="button" class="st-danger" onclick={() => (sheet = 'reset')}>重置</button>
   </div>
 {/snippet}
 
@@ -319,16 +320,16 @@
     {#if sheet === 'choose'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <div class="head">
-            <span class="title">选一份</span>
+          <div class="st-head">
+            <span class="st-title">选一份</span>
           </div>
           <p>云端有一份，这台也有。用哪边？</p>
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="ghost" disabled={accountBusy} onclick={() => (sheet = 'set')}>
+            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="st-ghost" disabled={accountBusy} onclick={() => (sheet = 'set')}>
               用这台的
             </button>
-            <button type="button" class="action" disabled={accountBusy} onclick={() => (sheet = 'unlock')}>
+            <button type="button" class="st-action" disabled={accountBusy} onclick={() => (sheet = 'unlock')}>
               用云端的
             </button>
           </div>
@@ -337,8 +338,8 @@
     {:else if sheet === 'set'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <div class="head">
-            <span class="title">恢复口令</span>
+          <div class="st-head">
+            <span class="st-title">恢复口令</span>
             {@render helpMark('用来加密云端这份。忘了就打不开，只能删掉重来。')}
           </div>
           <p>
@@ -349,8 +350,8 @@
           <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
           <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="action" disabled={accountBusy} onclick={confirmSet}>
+            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="st-action" disabled={accountBusy} onclick={confirmSet}>
               确定
             </button>
           </div>
@@ -359,15 +360,15 @@
     {:else if sheet === 'unlock'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <div class="head">
-            <span class="title">解开云端</span>
+          <div class="st-head">
+            <span class="st-title">解开云端</span>
             {@render helpMark('输入当时设的恢复口令。')}
           </div>
           <p>解开后这台会记住，退出或卸扩展才忘。</p>
           <input class="pass" type="password" autocomplete="current-password" placeholder="恢复口令" bind:value={passA} />
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="action" disabled={accountBusy} onclick={confirmUnlock}>
+            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="st-action" disabled={accountBusy} onclick={confirmUnlock}>
               解开
             </button>
           </div>
@@ -376,8 +377,8 @@
     {:else if sheet === 'change'}
       <div class="confirm" transition:fade={{ duration: 140 }}>
         <div class="confirm-card">
-          <div class="head">
-            <span class="title">改口令</span>
+          <div class="st-head">
+            <span class="st-title">改口令</span>
             {@render helpMark('要先对上现在的口令。')}
           </div>
           <p>新口令至少 8 位。</p>
@@ -385,8 +386,8 @@
           <input class="pass" type="password" autocomplete="new-password" placeholder="新口令，至少 8 位" bind:value={passA} />
           <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="action" disabled={accountBusy} onclick={confirmChange}>确定</button>
+            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="st-action" disabled={accountBusy} onclick={confirmChange}>确定</button>
           </div>
         </div>
       </div>
@@ -395,8 +396,8 @@
         <div class="confirm-card">
           <p>删掉云端那份密文。本机网格不动。此操作不可撤销。</p>
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="danger" disabled={accountBusy} onclick={confirmDeleteCloud}>确定删除</button>
+            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="st-danger" disabled={accountBusy} onclick={confirmDeleteCloud}>确定删除</button>
           </div>
         </div>
       </div>
@@ -405,8 +406,8 @@
         <div class="confirm-card">
           <p>将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动。这台登录会忘掉。云端还在。此操作不可撤销。</p>
           <div class="confirm-row">
-            <button type="button" class="ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="danger" onclick={confirmReset}>确定重置</button>
+            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
+            <button type="button" class="st-danger" onclick={confirmReset}>确定重置</button>
           </div>
         </div>
       </div>
@@ -466,21 +467,6 @@
     position: absolute;
     inset: 0;
   }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.22rem 0.5rem;
-  }
-  .title {
-    font-weight: 600;
-  }
-  .inline-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
   .pass {
     width: 100%;
     box-sizing: border-box;
@@ -515,42 +501,6 @@
     color: rgba(255, 255, 255, 0.88);
     border-color: rgba(255, 255, 255, 0.5);
   }
-  .action,
-  .danger,
-  .ghost {
-    appearance: none;
-    border: 0;
-    align-self: flex-start;
-    border-radius: 8px;
-    padding: 0.45rem 0.9rem;
-    cursor: pointer;
-    font: inherit;
-    transition:
-      background 0.15s ease,
-      transform 0.15s ease;
-  }
-  .action {
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
-  }
-  .action:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.24);
-  }
-  .action:disabled {
-    opacity: 0.6;
-  }
-  .danger {
-    background: #ff3b30;
-    color: #fff;
-  }
-  .danger:hover {
-    background: #e0352b;
-  }
-  .ghost {
-    background: transparent;
-    color: inherit;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-  }
   .confirm {
     position: absolute;
     inset: 0;
@@ -583,14 +533,14 @@
     justify-content: flex-end;
     gap: 0.5rem;
   }
-  .confirm-row .action {
+  .confirm-row .st-action {
     background: #fff;
     color: #111;
   }
-  .confirm-row .action:hover:not(:disabled) {
+  .confirm-row .st-action:hover:not(:disabled) {
     background: #f2f2f7;
   }
-  .confirm-row .action:disabled {
+  .confirm-row .st-action:disabled {
     opacity: 0.45;
   }
 </style>

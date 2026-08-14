@@ -63,7 +63,7 @@
 </script>
 
 <div class="key-block">
-  <div class="head" class:glow={glowApiKey}>
+  <div class="st-head" class:st-glow={glowApiKey}>
     {#if keyOk}
       <span class="key-ok" transition:scale={{ duration: 220, start: 0.45 }} aria-hidden="true">
         <svg viewBox="0 0 24 24" width="16" height="16">
@@ -78,7 +78,7 @@
         </svg>
       </span>
     {/if}
-    <span class="title">密钥</span>
+    <span class="st-title">密钥</span>
     {@render helpMark('选填。填了拉图更稳，想看「少儿不宜」内容必须先填。')}
     <a class="get" href={KEY_URL} target="_blank" rel="noreferrer">去获取</a>
   </div>
@@ -124,7 +124,7 @@
       </button>
     </div>
     {#if hasKey}
-      <button type="button" class="action" disabled={testBusy} onclick={testKey}>测试</button>
+      <button type="button" class="st-action" disabled={testBusy} onclick={testKey}>测试</button>
     {/if}
   </div>
 </div>
@@ -132,15 +132,6 @@
 <style>
   .key-block {
     display: contents;
-  }
-  .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.22rem 0.5rem;
-  }
-  .title {
-    font-weight: 600;
   }
   .get {
     margin-left: auto;
@@ -210,38 +201,6 @@
   }
   .eye:hover {
     color: rgba(255, 255, 255, 0.9);
-  }
-  .action {
-    appearance: none;
-    border: 0;
-    align-self: flex-start;
-    border-radius: 8px;
-    padding: 0.45rem 0.9rem;
-    cursor: pointer;
-    font: inherit;
-    transition:
-      background 0.15s ease,
-      transform 0.15s ease;
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
-  }
-  .action:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.24);
-  }
-  .action:disabled {
-    opacity: 0.6;
-  }
-  .glow {
-    box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.85);
-    animation: glow-fade 1.5s ease forwards;
-  }
-  @keyframes glow-fade {
-    0% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.95);
-    }
-    100% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
-    }
   }
   @keyframes shake {
     0%,

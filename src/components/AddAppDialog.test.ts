@@ -1,15 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-// jsdom 里 fade/scale 会引入时序抖动；测的是壳、Esc、焦点，不是动画。
-vi.mock('svelte/transition', () => ({ fade: () => () => {}, scale: () => () => {} }));
-
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import AddAppDialog from './AddAppDialog.svelte';
 import type { AppItem } from '../lib/types';
 
 afterEach(() => {
-  cleanup();
   vi.unstubAllGlobals();
   document.getElementById('test-opener')?.remove();
 });

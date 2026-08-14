@@ -17,6 +17,9 @@ export default defineConfig({
     // 只编译 .svelte；环境仍按文件 // @vitest-environment，lib 测试保持 node。
     svelte({ configFile: false }),
   ],
+  test: {
+    setupFiles: ['./src/test/setup.ts'],
+  },
   assetsInclude: ['**/*.ico'],
   resolve: {
     // 否则 svelte 会走到 index-server，mount 在 jsdom 里不可用。

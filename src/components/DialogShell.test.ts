@@ -1,15 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
-// jsdom 里 fade 会引入时序抖动；测的是壳，不是动画。
-vi.mock('svelte/transition', () => ({ fade: () => () => {} }));
-
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import DialogShell from './DialogShell.svelte';
-
-// vitest 未开 globals，STL 不会自己挂 afterEach。
-afterEach(cleanup);
 
 /** @testing-library/svelte 没有 snippet 辅助，用 Svelte 的 createRawSnippet 传入 children。 */
 function childrenSnippet() {

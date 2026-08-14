@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// jsdom 里 fade/scale 会引入时序抖动；测的是壳与 Esc，不是动画。
-vi.mock('svelte/transition', () => ({ fade: () => () => {}, scale: () => () => {} }));
-
 const { stored } = vi.hoisted(() => ({
   stored: { value: null as import('../lib/accountSession').AccountSession | null },
 }));
@@ -19,13 +16,12 @@ vi.mock('wxt/utils/storage', () => ({
   },
 }));
 
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import SettingsModal from './SettingsModal.svelte';
 import type { AccountSession } from '../lib/accountSession';
 import { DEFAULT_SETTINGS, createEmptyState } from '../lib/types';
 
 afterEach(() => {
-  cleanup();
   vi.unstubAllGlobals();
   stored.value = null;
   document.getElementById('test-opener')?.remove();

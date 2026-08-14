@@ -24,6 +24,7 @@
   } from '../lib/accountSession';
   import CapsuleSwitch from './CapsuleSwitch.svelte';
   import CustomScroll from './CustomScroll.svelte';
+  import DialogShell from './DialogShell.svelte';
   import GhostTip from './GhostTip.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
 
@@ -135,16 +136,10 @@
     return () => window.clearTimeout(id);
   });
 
-  $effect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopImmediatePropagation();
-      if (sheet) sheet = null;
-      else onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  });
+  function onShellEscape() {
+    if (sheet) sheet = null;
+    else onClose();
+  }
 
   $effect(() => {
     void tab;
@@ -493,14 +488,7 @@
   {/if}
 {/snippet}
 
-<div
-  class="overlay"
-  role="dialog"
-  aria-modal="true"
-  aria-label="设置"
-  transition:fade={{ duration: 180 }}
->
-  <button type="button" class="backdrop" aria-label="关闭设置" onclick={onClose}></button>
+<DialogShell ariaLabel="设置" zIndex={45} backdropLabel="关闭设置" {onClose} onEscape={onShellEscape}>
   <div class="sheet ios-sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
     <aside>
       {#if accountConfigured()}
@@ -998,25 +986,9 @@
       </div>
     {/if}
   </div>
-</div>
+</DialogShell>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 45;
-    display: grid;
-    place-items: center;
-  }
-  .backdrop {
-    appearance: none;
-    position: absolute;
-    inset: 0;
-    border: 0;
-    padding: 0;
-    background: rgba(0, 0, 0, 0.28);
-    cursor: default;
-  }
   .sheet {
     position: relative;
     z-index: 1;

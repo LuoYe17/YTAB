@@ -61,7 +61,7 @@ export function purityAfterClearingKey(current: WallhavenPurity): WallhavenPurit
 type TagPreset = { id: string; label: string };
 
 /** 各分类自己的一小撮词；多开分类时按常规→动漫→人物并集，同 id 只留一次。 */
-export const WALLHAVEN_TAG_PRESETS: Record<CategoryKey, TagPreset[]> = {
+const WALLHAVEN_TAG_PRESETS: Record<CategoryKey, TagPreset[]> = {
   general: [
     { id: 'landscape', label: '风景' },
     { id: 'nature', label: '自然' },

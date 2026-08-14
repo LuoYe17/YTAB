@@ -23,3 +23,7 @@
 ### Git 分支
 
 长期 **`main`（可装基线）** + **`dev`（日常编码）**；大改短命分支开 PR（指派自己、按标题前缀打类型标签）后由维护者手动 squash 进 `dev`，发布同理进 `main`。相关大改攒成一条 PR 再开。Agent **不得**自动 `gh pr merge`。详见 `docs/agents/github-flow.md` 与 ADR-0012。
+
+### 资产清单
+
+**DialogShell**（`src/components/DialogShell.svelte`）：居中小弹窗的遮罩 / Esc / `role=dialog` 一律用它。禁止再复制 `.overlay` + `.backdrop`。文件夹叠加层（FolderOverlay）、首次启动、设置内层 confirm、CtxMenu 不走这套。

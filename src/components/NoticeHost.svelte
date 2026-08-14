@@ -1,73 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { dismissNotice, subscribeNotice, type Notice } from '../lib/notice';
+  import {
+    dismissNotice,
+    noticeAnimationEnded,
+    subscribeNotice,
+    type Notice,
+  } from '../lib/notice';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
 
   let { onAction }: { onAction: (focus: WallpaperFailFocus) => void } = $props();
 
   let shown = $state<Notice | null>(null);
   let phase = $state<'in' | 'out'>('in');
-  let hold = 0;
-  let pending: Notice | null = null;
-
-  function clearHold() {
-    window.clearTimeout(hold);
-  }
-
-  function armHold(id: number) {
-    clearHold();
-    hold = window.setTimeout(() => {
-      if (shown?.id === id) dismissNotice(id);
-    }, 2000);
-  }
-
-  function sameCopy(a: Notice, b: Notice): boolean {
-    return (
-      a.tone === b.tone &&
-      a.before === b.before &&
-      a.after === b.after &&
-      a.action?.text === b.action?.text &&
-      a.action?.focus === b.action?.focus
-    );
-  }
-
-  function play(next: Notice | null) {
-    // 新的来了先右溜旧的再从左边滑入；空则只出场。
-    if (!next) {
-      if (!shown) return;
-      phase = 'out';
-      return;
-    }
-    if (shown && shown.id !== next.id) {
-      // 同一条连点只续 2s，不重播滑入滑出。
-      if (sameCopy(shown, next)) {
-        pending = null;
-        shown = next;
-        if (phase === 'out') phase = 'in';
-        armHold(next.id);
-        return;
-      }
-      pending = next;
-      phase = 'out';
-      return;
-    }
-    shown = next;
-    phase = 'in';
-    armHold(next.id);
-  }
-
-  function onAnimEnd(e: AnimationEvent) {
-    // arrive 被换成 slip 时也会冒泡 animationend，只认右溜结束才卸。
-    if (phase !== 'out' || e.animationName !== 'slip') return;
-    shown = null;
-    if (pending) {
-      const n = pending;
-      pending = null;
-      shown = n;
-      phase = 'in';
-      armHold(n.id);
-    }
-  }
 
   function onCardClick() {
     if (shown) dismissNotice(shown.id);
@@ -79,13 +23,12 @@
     onAction(focus);
   }
 
-  onMount(() => {
-    const unsub = subscribeNotice((n) => play(n));
-    return () => {
-      unsub();
-      clearHold();
-    };
-  });
+  onMount(() =>
+    subscribeNotice((view) => {
+      shown = view.notice;
+      phase = view.phase;
+    }),
+  );
 </script>
 
 {#if shown}
@@ -97,7 +40,7 @@
     class:fail={n.tone === 'fail'}
     class:arrive={phase === 'in'}
     class:slip={phase === 'out'}
-    onanimationend={(e) => onAnimEnd(e)}
+    onanimationend={(e) => noticeAnimationEnded(e.animationName)}
   >
     <button type="button" class="dismiss" aria-label="关闭通知" onclick={onCardClick}></button>
     <span class="mark" aria-hidden="true">

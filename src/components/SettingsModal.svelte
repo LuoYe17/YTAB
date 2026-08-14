@@ -50,6 +50,7 @@
     onResetAll: () => void;
   } = $props();
 
+  // $state 初值读了 $props().highlight，编译器警告这只是一次快照。后面 highlight 由 $effect 同步，tab 也会被侧栏改掉，不能改成 $derived。
   /* svelte-ignore state_referenced_locally */
   let tab = $state<SettingsTab>(highlight ? 'wallpaper' : 'general');
   let accountBusy = $state(false);

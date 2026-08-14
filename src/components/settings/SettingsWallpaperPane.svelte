@@ -25,8 +25,10 @@
     helpMark: Snippet<[string]>;
   } = $props();
 
+  // $state 初值读了 highlight，编译器警告这只是一次快照。有新 highlight 时 $effect 会写入，1.5s 后本地清掉，不能改成 $derived。
   /* svelte-ignore state_referenced_locally */
   let glow = $state<WallpaperFailFocus | null>(highlight ?? null);
+  // $state 初值读了 highlight，编译器警告这只是一次快照。之后由用户点击和 $effect 共同改开合，不能改成 $derived。
   /* svelte-ignore state_referenced_locally */
   let wallhavenOpen = $state(Boolean(highlight));
 

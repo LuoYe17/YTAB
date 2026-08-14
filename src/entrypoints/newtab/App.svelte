@@ -19,6 +19,8 @@
     type AppGridEvent,
     type AppGridView,
   } from '../../lib/appGrid';
+  import { readGridMetrics } from '../../lib/gridInsertGeometry';
+  import type { PageDropTarget } from '../../lib/gridDrag';
   import { fetchHitokoto, type HitokotoFetchResult } from '../../lib/hitokoto';
   import { loadState, saveState } from '../../lib/storage';
   import { applyImportedState } from '../../lib/importApply';
@@ -57,12 +59,25 @@
   /** 上屏 URL；准备阶段仍是旧图，提交后才换成新图。 */
   let displayUrl = $state('');
   let mainEl = $state<HTMLElement | null>(null);
+  let pageGridEl = $state<HTMLElement | null>(null);
   let settingsBtnEl = $state<HTMLButtonElement | null>(null);
   let settingsOrigin = $state({ x: 40, y: 40 });
   let needPass = $state(false);
   let passA = $state('');
   let passB = $state('');
   let passBusy = $state(false);
+
+  /** 文件夹里拖出来时落到主网格哪一格；壳已隐藏，落点带仍是整个 main。 */
+  function readPageDropTarget(excludeId: string): PageDropTarget | null {
+    const metrics = pageGridEl ? readGridMetrics(pageGridEl) : null;
+    if (!metrics || !mainEl) return null;
+    const r = mainEl.getBoundingClientRect();
+    return {
+      metrics,
+      band: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+      occupiedCount: currentPageItems(grid).filter((i) => i.id !== excludeId).length,
+    };
+  }
 
   function openSettings(focus: WallpaperFailFocus | null = null) {
     const r = settingsBtnEl?.getBoundingClientRect();
@@ -310,7 +325,7 @@
   <div class="page">
     <WallpaperStage url={displayUrl} />
     <div class="shade"></div>
-    <main bind:this={mainEl} data-ytab-drop-band>
+    <main bind:this={mainEl}>
       <Clock />
       <HitokotoLine text={ytab.hitokoto.text} from={ytab.hitokoto.from} onRefresh={changeHitokoto} />
       <SearchBox endpoint={ytab.settings.bingEndpoint} />
@@ -331,6 +346,7 @@
             }}
             onEvent={dispatchGrid}
             hitRoot={mainEl}
+            bind:gridEl={pageGridEl}
           />
         </div>
       {/if}
@@ -416,6 +432,7 @@
         editingApp = app;
       }}
       onDeleteApp={(app) => dispatchGrid({ type: 'removeApp', appId: app.id })}
+      {readPageDropTarget}
     />
   {/if}
 

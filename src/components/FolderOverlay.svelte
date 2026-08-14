@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade, scale } from 'svelte/transition';
   import type { AppItem, FolderItem, GridItem } from '../lib/types';
-  import type { AppGridEvent } from '../lib/appGrid';
+  import type { DragEventFor, PageDropTarget } from '../lib/gridDrag';
   import CtxMenu from './CtxMenu.svelte';
   import IconSortGrid from './IconSortGrid.svelte';
 
@@ -13,14 +13,17 @@
     onEvent,
     onEditApp,
     onDeleteApp,
+    readPageDropTarget,
   }: {
     folder: FolderItem;
     onClose: () => void;
     onOpenApp: (app: AppItem) => void;
     onRename: (name: string) => void;
-    onEvent: (event: AppGridEvent) => void;
+    onEvent: (event: DragEventFor<'folder'>) => void;
     onEditApp: (app: AppItem) => void;
     onDeleteApp: (app: AppItem) => void;
+    /** 拖出落到主网格的位置；主网格由起始页持有 */
+    readPageDropTarget: (excludeId: string) => PageDropTarget | null;
   } = $props();
 
   let editing = $state(false);
@@ -52,19 +55,10 @@
     menu = { x: e.clientX, y: e.clientY, app: item };
   }
 
-  function onGridEvent(event: AppGridEvent) {
-    if (event.type === 'cancelDrag') {
-      shellDismissed = false;
-      onEvent(event);
-      return;
-    }
-    if (event.type === 'endDrag' || event.type === 'beginDrag') {
-      onEvent(event);
-      return;
-    }
-    if (event.type === 'reorderFolder' || event.type === 'eject') {
-      onEvent(event);
-    }
+  function onGridEvent(event: DragEventFor<'folder'>) {
+    // Esc 回滚时壳要回来；eject 会连整个浮层一起关掉，不必复位。
+    if (event.type === 'cancelDrag') shellDismissed = false;
+    onEvent(event);
   }
 </script>
 
@@ -99,7 +93,6 @@
     {/if}
     <IconSortGrid
       items={folder.children}
-      enableMerge={false}
       compact={true}
       scope="folder"
       outsideRoot={panelEl}
@@ -108,6 +101,7 @@
       onEvent={onGridEvent}
       onOutsideDwell={() => (shellDismissed = true)}
       {onGridContextMenu}
+      {readPageDropTarget}
     />
   </div>
 </div>

@@ -27,6 +27,7 @@
   import DialogShell from './DialogShell.svelte';
   import GhostTip from './GhostTip.svelte';
   import SegmentedControl from './SegmentedControl.svelte';
+  import SettingsGeneralPane from './settings/SettingsGeneralPane.svelte';
 
   type Tab = 'general' | 'wallpaper' | 'account';
   type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
@@ -548,41 +549,13 @@
         {#if tab === 'general'}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
-              <div class="block inline">
-                <div class="head">
-                  <span id="lbl-open" class="title">打开方式</span>
-                  {@render helpMark('点 App 时用当前这一页打开，还是另开一个标签。搜索框和页脚链接不受影响。')}
-                </div>
-                <SegmentedControl
-                  labelledBy="lbl-open"
-                  value={settings.openTarget}
-                  options={[
-                    { value: 'current', label: '当前标签' },
-                    { value: 'new', label: '新标签' },
-                  ]}
-                  onChange={(v) => patch({ openTarget: v as Settings['openTarget'] })}
-                />
-              </div>
-              <div class="block inline">
-                <div class="head">
-                  <span id="lbl-bing" class="title">搜索地区</span>
-                  {@render helpMark('搜索框用国内 Bing 还是国际 Bing。国内更贴中文结果。')}
-                </div>
-                <SegmentedControl
-                  labelledBy="lbl-bing"
-                  value={settings.bingEndpoint}
-                  options={[
-                    { value: 'cn', label: '国内' },
-                    { value: 'www', label: '国际' },
-                  ]}
-                  onChange={(v) => patch({ bingEndpoint: v as Settings['bingEndpoint'] })}
-                />
-              </div>
-              {#if !accountConfigured()}
-                <div class="block">
-                  {@render resetRow()}
-                </div>
-              {/if}
+              <SettingsGeneralPane
+                {settings}
+                showReset={!accountConfigured()}
+                {onChange}
+                {helpMark}
+                {resetRow}
+              />
             </CustomScroll>
           </div>
         {:else if tab === 'wallpaper'}

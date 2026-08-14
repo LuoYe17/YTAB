@@ -5,7 +5,7 @@ import type { AppItem, FolderItem, GridItem } from './types';
 
 const PAGE_CAPACITY = 19;
 
-export type AppGridDragSnapshot = {
+type AppGridDragSnapshot = {
   pages: GridItem[][];
   pageIndex: number;
   /** 按下时打开中的文件夹；Esc 要连里面的换位一起回滚。 */

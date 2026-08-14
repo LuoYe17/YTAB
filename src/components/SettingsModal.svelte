@@ -1,10 +1,11 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { DEFAULT_SETTINGS, type Settings, type WallhavenSorting, type YtabState } from '../lib/types';
+  import type { Settings, YtabState } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
   import { plainNotice } from '../lib/notice';
-  import { applyFilter, visibleTagPresets, type FilterAction } from '../lib/settingsFilters';
+  import { foldMax } from '../lib/foldMax';
+  import { applyFilter, type FilterAction } from '../lib/settingsFilters';
   import { fetchBackup, deleteBackup } from '../lib/accountApi';
   import { signIn } from '../lib/accountAuth';
   import { accountConfigured } from '../lib/accountConfig';
@@ -18,28 +19,19 @@
     sessionFromAuth,
     type AccountSession,
   } from '../lib/accountSession';
-  import CapsuleSwitch from './CapsuleSwitch.svelte';
   import CustomScroll from './CustomScroll.svelte';
   import DialogShell from './DialogShell.svelte';
   import GhostTip from './GhostTip.svelte';
-  import SegmentedControl from './SegmentedControl.svelte';
   import SettingsAccountPane from './settings/SettingsAccountPane.svelte';
   import SettingsGeneralPane from './settings/SettingsGeneralPane.svelte';
   import SettingsNav from './settings/SettingsNav.svelte';
+  import SettingsWallhavenFilters from './settings/SettingsWallhavenFilters.svelte';
   import SettingsWallhavenKey from './settings/SettingsWallhavenKey.svelte';
 
   type Tab = 'general' | 'wallpaper' | 'account';
   type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
 
   const SITE_URL = 'https://wallhaven.cc';
-  const SORTING_OPTIONS: { value: WallhavenSorting; label: string }[] = [
-    { value: 'random', label: '随机' },
-    { value: 'date_added', label: '最新' },
-    { value: 'relevance', label: '相关' },
-    { value: 'views', label: '浏览' },
-    { value: 'favorites', label: '收藏' },
-    { value: 'toplist', label: '热门' },
-  ];
 
   let {
     settings,
@@ -75,16 +67,6 @@
   let passOld = $state('');
   /* svelte-ignore state_referenced_locally */
   let wallhavenOpen = $state(Boolean(highlight));
-  let tagsOpen = $state(false);
-
-  const hasKey = $derived((settings.wallhavenApiKey ?? '').trim().length > 0);
-  const tagPresets = $derived(visibleTagPresets(settings.wallhavenCategories));
-  const sortingOptions = $derived(
-    SORTING_OPTIONS.map((o) => ({
-      ...o,
-      collapsed: o.value === 'relevance' && (settings.wallhavenTags?.length ?? 0) === 0,
-    })),
-  );
 
   $effect(() => {
     if (!accountConfigured() && tab === 'account') tab = 'general';
@@ -129,18 +111,6 @@
     const result = applyFilter(settings, action);
     if (result.notice) plainNotice('fail', result.notice);
     onChange(result.settings, result.invalidatePool);
-  }
-
-  function setPurity(key: 'sfw' | 'sketchy' | 'nsfw', on: boolean) {
-    commitFilter({ type: 'purity', key, on });
-  }
-
-  function setCategory(key: 'general' | 'anime' | 'people', on: boolean) {
-    commitFilter({ type: 'category', key, on });
-  }
-
-  function setTag(id: string, on: boolean) {
-    commitFilter({ type: 'tag', id, on });
   }
 
   function closeSheet() {
@@ -290,42 +260,6 @@
     onResetAll();
   }
 
-  /** 按真实高度过渡。写死很大的 max-height 会让展开只走前一截、收起先空转。 */
-  function foldMax(node: HTMLElement, open: boolean) {
-    const inner = () => node.firstElementChild as HTMLElement | null;
-    const apply = (isOpen: boolean, instant: boolean) => {
-      const h = inner()?.scrollHeight ?? 0;
-      node.style.transitionDuration = instant ? '0s' : isOpen ? '0.48s' : '0.24s';
-      if (isOpen) {
-        node.style.maxHeight = `${h}px`;
-        return;
-      }
-      if (instant) {
-        node.style.maxHeight = '0px';
-        return;
-      }
-      node.style.maxHeight = `${h}px`;
-      node.getBoundingClientRect();
-      node.style.maxHeight = '0px';
-    };
-    apply(open, true);
-    const ro = new ResizeObserver(() => {
-      if (!open) return;
-      node.style.maxHeight = `${inner()?.scrollHeight ?? 0}px`;
-    });
-    const child = inner();
-    if (child) ro.observe(child);
-    return {
-      update(isOpen: boolean) {
-        open = isOpen;
-        apply(isOpen, false);
-      },
-      destroy() {
-        ro.disconnect();
-      },
-    };
-  }
-
   function popFrom(node: HTMLElement, params: { x: number; y: number }) {
     const run = (x: number, y: number) => {
       const r = node.getBoundingClientRect();
@@ -462,118 +396,12 @@
                       onPatch={patch}
                       {helpMark}
                     />
-                  <div class="wh-row" class:glow={glow === 'filters'}>
-                    <div class="head">
-                      <span class="title">尺度</span>
-                      {@render helpMark('想看少儿不宜的图。至少留一项。没密钥不能开「少儿不宜」。')}
-                    </div>
-                    <div class="caps tight">
-                      <CapsuleSwitch
-                        label="安全"
-                        tile
-                        on={settings.wallhavenPurity.sfw}
-                        onChange={(on) => setPurity('sfw', on)}
-                      />
-                      <CapsuleSwitch
-                        label="擦边"
-                        tile
-                        on={settings.wallhavenPurity.sketchy}
-                        onChange={(on) => setPurity('sketchy', on)}
-                      />
-                      <CapsuleSwitch
-                        label="少儿不宜"
-                        tile
-                        on={settings.wallhavenPurity.nsfw}
-                        disabled={!hasKey}
-                        onChange={(on) => setPurity('nsfw', on)}
-                      />
-                    </div>
-                  </div>
-                  <div class="wh-row" class:glow={glow === 'filters'}>
-                    <div class="head">
-                      <span class="title">分类</span>
-                      {@render helpMark('壁纸属于哪一类。至少留一项。')}
-                    </div>
-                    <div class="caps tight">
-                      <CapsuleSwitch
-                        label="常规"
-                        tile
-                        on={settings.wallhavenCategories.general}
-                        onChange={(on) => setCategory('general', on)}
-                      />
-                      <CapsuleSwitch
-                        label="动漫"
-                        tile
-                        on={settings.wallhavenCategories.anime}
-                        onChange={(on) => setCategory('anime', on)}
-                      />
-                      <CapsuleSwitch
-                        label="人物"
-                        tile
-                        on={settings.wallhavenCategories.people}
-                        onChange={(on) => setCategory('people', on)}
-                      />
-                    </div>
-                  </div>
-                  <div class="wh-row">
-                    <div class="head">
-                      <span id="wallpaper-sorting" class="title">排序</span>
-                      {@render helpMark('按什么顺序抽图。「热门」看近一个月。勾了标签才出现「相关」；从随机或最新勾上第一个标签会改到相关。')}
-                    </div>
-                    <SegmentedControl
-                      labelledBy="wallpaper-sorting"
-                      value={settings.wallhavenSorting || DEFAULT_SETTINGS.wallhavenSorting}
-                      options={sortingOptions}
-                      fill
-                      onChange={(v) => commitFilter({ type: 'sorting', value: v as WallhavenSorting })}
+                    <SettingsWallhavenFilters
+                      {settings}
+                      glowFilters={glow === 'filters'}
+                      onCommitFilter={commitFilter}
+                      {helpMark}
                     />
-                  </div>
-                    <div
-                      class="head fold"
-                      role="button"
-                      tabindex="0"
-                      aria-expanded={tagsOpen}
-                      aria-label={tagsOpen ? '收起标签' : '展开标签'}
-                      onclick={(e) => {
-                        if ((e.target as HTMLElement).closest('.help')) return;
-                        tagsOpen = !tagsOpen;
-                      }}
-                      onkeydown={(e) => {
-                        if (e.key !== 'Enter' && e.key !== ' ') return;
-                        if ((e.target as HTMLElement).closest('.help')) return;
-                        e.preventDefault();
-                        tagsOpen = !tagsOpen;
-                      }}
-                    >
-                      <span class="title">标签</span>
-                      <span class="fold-help">
-                        {@render helpMark('可选。跟着上面分类换。多选一起搜，全关就不限题材。')}
-                      </span>
-                      <span class="chev" class:open={tagsOpen} aria-hidden="true">
-                        <svg viewBox="0 0 16 16" width="14" height="14">
-                          <path
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            d="M4 6.5 8 10.5 12 6.5"
-                          />
-                        </svg>
-                      </span>
-                    </div>
-                    <div class="fold-body" class:open={tagsOpen} use:foldMax={tagsOpen}>
-                      <div class="caps fill">
-                        {#each tagPresets as tag (tag.id)}
-                          <CapsuleSwitch
-                            label={tag.label}
-                            tile
-                            on={(settings.wallhavenTags ?? []).includes(tag.id)}
-                            onChange={(on) => setTag(tag.id, on)}
-                          />
-                        {/each}
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -847,21 +675,6 @@
     gap: 0.55rem;
     padding: 0.15rem 0.75rem 0.7rem;
   }
-  .wh-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.55rem;
-    padding: 0.15rem 0;
-    border-radius: 8px;
-  }
-  .caps.tight {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 0.4rem;
-    flex: 1;
-    min-width: 0;
-  }
   .head {
     display: flex;
     flex-wrap: wrap;
@@ -911,16 +724,6 @@
     color: rgba(255, 255, 255, 0.88);
     border-color: rgba(255, 255, 255, 0.5);
   }
-  .caps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-  }
-  .caps.fill {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 0.4rem;
-  }
   .action,
   .danger,
   .ghost {
@@ -956,18 +759,6 @@
     background: transparent;
     color: inherit;
     border: 1px solid rgba(255, 255, 255, 0.16);
-  }
-  .glow {
-    box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.85);
-    animation: glow-fade 1.5s ease forwards;
-  }
-  @keyframes glow-fade {
-    0% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0.95);
-    }
-    100% {
-      box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
-    }
   }
   .confirm {
     position: absolute;

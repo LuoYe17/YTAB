@@ -73,10 +73,6 @@ export function urlReadyToFetch(input: string): boolean {
   }
 }
 
-export function buildAuthorDefaultApps(): AppItem[] {
-  return AUTHOR_DEFAULT_APPS.map((a) => createAppFromUrl(a.url, a.name));
-}
-
 export async function buildAuthorDefaultAppsCached(): Promise<AppItem[]> {
   return Promise.all(
     AUTHOR_DEFAULT_APPS.map(async (a) => {

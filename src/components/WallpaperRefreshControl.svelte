@@ -1,5 +1,7 @@
 <script lang="ts">
   import GhostTip from './GhostTip.svelte';
+  import FaceScan from './FaceScan.svelte';
+  import OkTick from './OkTick.svelte';
   import './effects.css';
   import type { WallpaperPrepareResult } from '../lib/wallpaper';
   import { wallpaperFailHint, type WallpaperFailHint } from '../lib/wallpaperFail';
@@ -65,25 +67,15 @@
     </span>
 
     <span class="glyph" class:show={phase === 'scan'} aria-hidden={phase !== 'scan'}>
-      <svg viewBox="0 0 64 64" width="28" height="28">
-        <circle class="faceid-track" cx="32" cy="32" r="22" />
-        <circle class="faceid-arc" cx="32" cy="32" r="22" />
-      </svg>
+      {#if phase === 'scan'}
+        <FaceScan color="#fff" track="rgba(255, 255, 255, 0.22)" size={28} />
+      {/if}
     </span>
 
     <span class="glyph" class:show={phase === 'success'} aria-hidden={phase !== 'success'}>
-      <svg viewBox="0 0 64 64" width="28" height="28">
-        <circle class="success-ring" cx="32" cy="32" r="22" />
-        <path
-          class="success-check"
-          fill="none"
-          stroke="#34c759"
-          stroke-width="3.2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M20 33.5 28.5 42 44 24"
-        />
-      </svg>
+      {#if phase === 'success'}
+        <OkTick size={28} />
+      {/if}
     </span>
 
     <span class="glyph fail" class:show={phase === 'error'} aria-hidden={phase !== 'error'}>
@@ -149,45 +141,20 @@
   .glyph.fail.show {
     animation: fail-shake 0.45s ease;
   }
-  .faceid-track {
-    fill: none;
-    stroke: rgba(255, 255, 255, 0.2);
-    stroke-width: 3;
-  }
-  .faceid-arc {
-    fill: none;
-    stroke: #fff;
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-dasharray: 42 96;
-    transform-origin: 32px 32px;
-  }
-  .glyph.show .faceid-arc {
-    animation: fx-faceid-spin 0.9s linear infinite;
-  }
-  .success-ring,
   .fail-ring {
     fill: none;
+    stroke: #ff3b30;
     stroke-width: 3;
     stroke-dasharray: 140;
     stroke-dashoffset: 140;
   }
-  .success-ring {
-    stroke: #34c759;
-  }
-  .fail-ring {
-    stroke: #ff3b30;
-  }
-  .glyph.show .success-ring,
   .glyph.show .fail-ring {
     animation: fx-ring-draw 0.42s ease forwards;
   }
-  .success-check,
   .fail-x {
     stroke-dasharray: 36;
     stroke-dashoffset: 36;
   }
-  .glyph.show .success-check,
   .glyph.show .fail-x {
     animation: fx-check-draw 0.32s 0.12s ease forwards;
   }

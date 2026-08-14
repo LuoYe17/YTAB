@@ -7,8 +7,9 @@
   import { createAppDraft, type AppDraftSnapshot } from '../lib/appDraft';
   import { srcFor } from '../lib/appIcons';
   import DialogShell from './DialogShell.svelte';
+  import FaceScan from './FaceScan.svelte';
   import HelpMark from './HelpMark.svelte';
-  import './effects.css';
+  import OkTick from './OkTick.svelte';
 
   let {
     initial = null,
@@ -155,35 +156,11 @@
         {/if}
         {#if snap.phase === 'scan'}
           <span class="faceid" aria-hidden="true">
-            <svg viewBox="0 0 64 64" width="40" height="40">
-              <circle class="faceid-track" cx="32" cy="32" r="22" />
-              <circle class="faceid-arc" cx="32" cy="32" r="22" />
-              <g class="faceid-mark" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
-                <path stroke-width="2.4" d="M22 26V22h4" />
-                <path stroke-width="2.4" d="M42 22h4v4" />
-                <path stroke-width="2.4" d="M46 42v4h-4" />
-                <path stroke-width="2.4" d="M26 46h-4v-4" />
-                <ellipse cx="32" cy="33" rx="7.5" ry="9" stroke-width="2" />
-                <circle cx="29.2" cy="31.5" r="1.15" fill="#fff" stroke="none" />
-                <circle cx="34.8" cy="31.5" r="1.15" fill="#fff" stroke="none" />
-                <path stroke-width="1.8" d="M32 33.2v3.2" />
-              </g>
-            </svg>
+            <FaceScan color="#fff" track="rgba(255, 255, 255, 0.22)" />
           </span>
         {:else if snap.phase === 'success'}
           <span class="ok" aria-hidden="true" out:fade={{ duration: 380 }}>
-            <svg viewBox="0 0 64 64" width="40" height="40">
-              <circle class="success-ring" cx="32" cy="32" r="22" />
-              <path
-                class="success-check"
-                fill="none"
-                stroke="#34c759"
-                stroke-width="3.2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M20 33.5 28.5 42 44 24"
-              />
-            </svg>
+            <OkTick />
           </span>
         {/if}
       </button>
@@ -354,36 +331,6 @@
     place-items: center;
     background: rgba(0, 0, 0, 0.48);
     pointer-events: none;
-  }
-  .faceid-track {
-    fill: none;
-    stroke: rgba(255, 255, 255, 0.22);
-    stroke-width: 3;
-  }
-  .faceid-arc {
-    fill: none;
-    stroke: #fff;
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-dasharray: 42 96;
-    transform-origin: 32px 32px;
-    animation: fx-faceid-spin 0.9s linear infinite;
-  }
-  .faceid-mark {
-    animation: fx-faceid-pulse 0.9s ease-in-out infinite;
-  }
-  .success-ring {
-    fill: none;
-    stroke: #34c759;
-    stroke-width: 3;
-    stroke-dasharray: 140;
-    stroke-dashoffset: 140;
-    animation: fx-ring-draw 0.42s ease forwards;
-  }
-  .success-check {
-    stroke-dasharray: 36;
-    stroke-dashoffset: 36;
-    animation: fx-check-draw 0.32s 0.18s ease forwards;
   }
   .block {
     display: flex;

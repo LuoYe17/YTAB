@@ -18,7 +18,8 @@
   import { passphraseOk } from '../lib/accountCrypto';
   import { plainNotice } from '../lib/notice';
   import { saveSession, sessionFromAuth, type AccountSession } from '../lib/accountSession';
-  import './effects.css';
+  import FaceScan from './FaceScan.svelte';
+  import OkTick from './OkTick.svelte';
 
   let {
     settings,
@@ -178,37 +179,13 @@
 
 {#snippet scanMark()}
   <div class="faceid" aria-label="准备中" aria-live="polite">
-    <svg viewBox="0 0 64 64" width="44" height="44">
-      <circle class="faceid-track" cx="32" cy="32" r="22" />
-      <circle class="faceid-arc" cx="32" cy="32" r="22" />
-      <g class="faceid-mark" fill="none" stroke="#0a84ff" stroke-linecap="round" stroke-linejoin="round">
-        <path stroke-width="2.4" d="M22 26V22h4" />
-        <path stroke-width="2.4" d="M42 22h4v4" />
-        <path stroke-width="2.4" d="M46 42v4h-4" />
-        <path stroke-width="2.4" d="M26 46h-4v-4" />
-        <ellipse cx="32" cy="33" rx="7.5" ry="9" stroke-width="2" />
-        <circle cx="29.2" cy="31.5" r="1.15" fill="#0a84ff" stroke="none" />
-        <circle cx="34.8" cy="31.5" r="1.15" fill="#0a84ff" stroke="none" />
-        <path stroke-width="1.8" d="M32 33.2v3.2" />
-      </g>
-    </svg>
+    <FaceScan color="#0a84ff" track="rgba(10, 132, 255, 0.18)" size={44} />
   </div>
 {/snippet}
 
 {#snippet okMark()}
   <div class="success" aria-label="成功" aria-live="polite">
-    <svg viewBox="0 0 64 64" width="44" height="44">
-      <circle class="success-ring" cx="32" cy="32" r="22" />
-      <path
-        class="success-check"
-        fill="none"
-        stroke="#34c759"
-        stroke-width="3.2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        d="M20 33.5 28.5 42 44 24"
-      />
-    </svg>
+    <OkTick size={44} />
   </div>
 {/snippet}
 
@@ -816,40 +793,5 @@
     height: 44px;
     display: grid;
     place-items: center;
-  }
-
-  .faceid-track {
-    fill: none;
-    stroke: rgba(10, 132, 255, 0.18);
-    stroke-width: 3;
-  }
-
-  .faceid-arc {
-    fill: none;
-    stroke: #0a84ff;
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-dasharray: 42 96;
-    transform-origin: 32px 32px;
-    animation: fx-faceid-spin 0.9s linear infinite;
-  }
-
-  .faceid-mark {
-    animation: fx-faceid-pulse 0.9s ease-in-out infinite;
-  }
-
-  .success-ring {
-    fill: none;
-    stroke: #34c759;
-    stroke-width: 3;
-    stroke-dasharray: 140;
-    stroke-dashoffset: 140;
-    animation: fx-ring-draw 0.42s ease forwards;
-  }
-
-  .success-check {
-    stroke-dasharray: 36;
-    stroke-dashoffset: 36;
-    animation: fx-check-draw 0.32s 0.18s ease forwards;
   }
 </style>

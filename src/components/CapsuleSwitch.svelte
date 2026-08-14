@@ -1,5 +1,5 @@
 <script lang="ts">
-  import './effects.css';
+  import OkTick from './OkTick.svelte';
 
   let {
     on = false,
@@ -54,18 +54,7 @@
   {#if celebrate}
     <span class="mask" aria-hidden="true"></span>
     <span class="burst" aria-hidden="true">
-      <svg viewBox="0 0 64 64" width="28" height="28">
-        <circle class="ring" cx="32" cy="32" r="22" />
-        <path
-          class="check"
-          fill="none"
-          stroke="#34c759"
-          stroke-width="3.2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M20 33.5 28.5 42 44 24"
-        />
-      </svg>
+      <OkTick size={28} />
     </span>
   {/if}
 </button>
@@ -139,18 +128,5 @@
     height: 28px;
     margin: -14px 0 0 -14px;
     pointer-events: none;
-  }
-  .ring {
-    fill: none;
-    stroke: #34c759;
-    stroke-width: 3;
-    stroke-dasharray: 140;
-    stroke-dashoffset: 140;
-    animation: fx-ring-draw 0.42s ease forwards;
-  }
-  .check {
-    stroke-dasharray: 36;
-    stroke-dashoffset: 36;
-    animation: fx-check-draw 0.32s 0.12s ease forwards;
   }
 </style>

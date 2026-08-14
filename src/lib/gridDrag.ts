@@ -22,7 +22,7 @@ import type { GridItem } from './types';
 export const MERGE_DWELL_MS = 400;
 export const INSERT_DWELL_MS = 220;
 export const OUTSIDE_DWELL_MS = 320;
-export const PAGE_EDGE_PX = 44;
+const PAGE_EDGE_PX = 44;
 export const PAGE_FLIP_DWELL_MS = 400;
 export const PAGE_FLIP_COOLDOWN_MS = 650;
 

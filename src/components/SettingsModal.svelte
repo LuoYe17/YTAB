@@ -4,8 +4,6 @@
   import type { Settings, YtabState } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
   import { plainNotice } from '../lib/notice';
-  import { foldMax } from '../lib/foldMax';
-  import { applyFilter, type FilterAction } from '../lib/settingsFilters';
   import { fetchBackup, deleteBackup } from '../lib/accountApi';
   import { signIn } from '../lib/accountAuth';
   import { accountConfigured } from '../lib/accountConfig';
@@ -25,13 +23,10 @@
   import SettingsAccountPane from './settings/SettingsAccountPane.svelte';
   import SettingsGeneralPane from './settings/SettingsGeneralPane.svelte';
   import SettingsNav from './settings/SettingsNav.svelte';
-  import SettingsWallhavenFilters from './settings/SettingsWallhavenFilters.svelte';
-  import SettingsWallhavenKey from './settings/SettingsWallhavenKey.svelte';
+  import SettingsWallpaperPane from './settings/SettingsWallpaperPane.svelte';
 
   type Tab = 'general' | 'wallpaper' | 'account';
   type Sheet = 'reset' | 'set' | 'unlock' | 'change' | 'choose' | 'delete' | null;
-
-  const SITE_URL = 'https://wallhaven.cc';
 
   let {
     settings,
@@ -57,16 +52,12 @@
 
   /* svelte-ignore state_referenced_locally */
   let tab = $state<Tab>(highlight ? 'wallpaper' : 'general');
-  /* svelte-ignore state_referenced_locally */
-  let glow = $state<WallpaperFailFocus | null>(highlight ?? null);
   let accountBusy = $state(false);
   let sheet = $state<Sheet>(null);
   let session = $state<AccountSession | null>(null);
   let passA = $state('');
   let passB = $state('');
   let passOld = $state('');
-  /* svelte-ignore state_referenced_locally */
-  let wallhavenOpen = $state(Boolean(highlight));
 
   $effect(() => {
     if (!accountConfigured() && tab === 'account') tab = 'general';
@@ -86,31 +77,11 @@
   $effect(() => {
     if (!highlight) return;
     tab = 'wallpaper';
-    wallhavenOpen = true;
-    glow = highlight;
-  });
-
-  $effect(() => {
-    if (!glow) return;
-    const id = window.setTimeout(() => {
-      glow = null;
-    }, 1500);
-    return () => window.clearTimeout(id);
   });
 
   function onShellEscape() {
     if (sheet) closeSheet();
     else onClose();
-  }
-
-  function patch(partial: Partial<Settings>) {
-    onChange({ ...settings, ...partial });
-  }
-
-  function commitFilter(action: FilterAction) {
-    const result = applyFilter(settings, action);
-    if (result.notice) plainNotice('fail', result.notice);
-    onChange(result.settings, result.invalidatePool);
   }
 
   function closeSheet() {
@@ -299,24 +270,6 @@
   </div>
 {/snippet}
 
-{#snippet wallhavenMark()}
-  <svg class="wh-mark" viewBox="0 0 1024 1024" width="16" height="16" aria-hidden="true">
-    <defs>
-      <linearGradient id="ytab-wh-plate" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#f0f0f0" />
-        <stop offset="1" stop-color="#d0d0d0" />
-      </linearGradient>
-    </defs>
-    <rect width="1024" height="1024" rx="180" ry="180" fill="url(#ytab-wh-plate)" />
-    <g transform="translate(512 512) scale(1.08) translate(-537 -483)">
-      <path
-        fill="#2a2a2a"
-        d="M216.8 776.4c-7.2-2-14-4.4-15.2-5.6-4-4 2-16.8 14-30l12-12.8h85.6l13.2-14.4c32-33.6 57.2-86.4 75.6-158.8 22.4-86.4 33.6-127.6 46.4-166 7.2-22.4 12-41.6 10.4-43.2-3.6-4-98.8 17.6-110 24.8-14.8 9.6-18 24-20.4 91.6l-2.4 64-11.6 1.2c-19.2 2.4-29.2-2.4-34-15.6-7.2-20.4-5.2-63.6 3.6-89.6 18-52.8 39.6-74 88.4-87.6 14-3.6 44-12 66.4-18.8 48.4-14 66-14.8 77.2-3.6 4.4 4.4 8 9.6 8 11.2s-9.2 24.4-20.4 50c-12.8 30-22.4 59.6-26 81.2-3.2 19.2-5.6 34.8-4.8 35.6 3.2 2.4 112.4 14 134 14h24.8l2.4-14.8c4.8-30.4 38.8-144 50.4-168.8 14.8-32 46.4-74.8 71.2-97.2 28.4-25.6 64-37.6 105.6-36 11.6 0.8 14.8 2.4 14.8 8.4 0 14.4-18.8 27.6-51.2 34.8-50.4 11.6-58.4 17.2-76.4 52.8-8.4 16.8-18.4 41.6-22.4 54.8s-12 40.4-18.4 60c-6.4 20-14.8 53.2-19.2 74s-12.4 55.2-18 76c-12.8 51.6-30.4 146.8-30.4 164.8 0 20 8.4 25.2 54.4 33.2 43.6 8 50.8 11.6 40 20-11.2 8.4-38.4 12-98.4 12h-54l-1.2-18c-0.4-10 2.8-34 7.2-54 20.4-90.4 36.4-171.2 34.4-173.2-1.2-0.8-26-3.6-55.2-5.6s-63.6-4.8-76.4-6.4c-15.2-2-24.4-1.6-26.4 0.8s-7.2 17.2-12 32.4c-11.6 39.6-41.2 98.8-59.6 118.8-8.4 9.6-23.6 28-33.6 41.2-28 36.4-41.6 49.6-58 56.4-17.2 7.6-65.6 10.8-84.4 6z"
-      />
-    </g>
-  </svg>
-{/snippet}
-
 <DialogShell ariaLabel="设置" zIndex={45} backdropLabel="关闭设置" {onClose} onEscape={onShellEscape}>
   <div class="sheet ios-sheet" in:popFrom={{ x: origin.x, y: origin.y }} out:popFrom={{ x: origin.x, y: origin.y }}>
     <SettingsNav {tab} {session} showWho={accountConfigured()} onSelectTab={(id) => (tab = id)} {githubMark} />
@@ -341,70 +294,7 @@
         {:else if tab === 'wallpaper'}
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
-              <div class="block fold-card">
-                <div
-                  class="head fold"
-                  role="button"
-                  tabindex="0"
-                  aria-expanded={wallhavenOpen}
-                  aria-label={wallhavenOpen ? '收起 Wallhaven' : '展开 Wallhaven'}
-                  onclick={(e) => {
-                    if ((e.target as HTMLElement).closest('.help, .wh-home')) return;
-                    wallhavenOpen = !wallhavenOpen;
-                  }}
-                  onkeydown={(e) => {
-                    if (e.key !== 'Enter' && e.key !== ' ') return;
-                    if ((e.target as HTMLElement).closest('.help, .wh-home')) return;
-                    e.preventDefault();
-                    wallhavenOpen = !wallhavenOpen;
-                  }}
-                >
-                  <span class="fold-brand">
-                    <a
-                      class="wh-home"
-                      href={SITE_URL}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label="打开 Wallhaven 官网"
-                    >
-                      {@render wallhavenMark()}
-                    </a>
-                    <span class="title">Wallhaven</span>
-                  </span>
-                  <span class="fold-help">
-                    {@render helpMark('拉壁纸用的站。密钥选填；尺度、分类、标签都在这里。')}
-                  </span>
-                  <span class="chev" class:open={wallhavenOpen} aria-hidden="true">
-                    <svg viewBox="0 0 16 16" width="14" height="14">
-                      <path
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M4 6.5 8 10.5 12 6.5"
-                      />
-                    </svg>
-                  </span>
-                </div>
-                <div class="fold-body" class:open={wallhavenOpen} use:foldMax={wallhavenOpen}>
-                  <div class="fold-clip">
-                    <SettingsWallhavenKey
-                      {settings}
-                      glowApiKey={glow === 'apiKey'}
-                      onCommitFilter={commitFilter}
-                      onPatch={patch}
-                      {helpMark}
-                    />
-                    <SettingsWallhavenFilters
-                      {settings}
-                      glowFilters={glow === 'filters'}
-                      onCommitFilter={commitFilter}
-                      {helpMark}
-                    />
-                  </div>
-                </div>
-              </div>
+              <SettingsWallpaperPane {settings} {highlight} {onChange} {helpMark} />
             </CustomScroll>
           </div>
         {:else if tab === 'account'}
@@ -575,105 +465,6 @@
   .body {
     position: absolute;
     inset: 0;
-  }
-  .block {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.7rem 0.8rem;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .fold-card {
-    gap: 0;
-    padding: 0;
-    overflow: hidden;
-  }
-  .fold-card > .head.fold {
-    position: relative;
-    z-index: 1;
-    padding: 0.58rem 0.75rem;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.04);
-  }
-  .head.fold {
-    width: 100%;
-    cursor: pointer;
-    border-radius: 8px;
-    user-select: none;
-  }
-  .head.fold:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .fold-brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    min-width: 0;
-  }
-  .fold-brand .title {
-    line-height: 1;
-  }
-  .wh-home {
-    display: grid;
-    flex-shrink: 0;
-    line-height: 0;
-    border-radius: 0.28em;
-    color: inherit;
-    text-decoration: none;
-    cursor: pointer;
-    transition:
-      transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
-      filter 0.18s ease,
-      box-shadow 0.18s ease;
-  }
-  .wh-home:hover {
-    transform: scale(1.18);
-    filter: brightness(1.22);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-  }
-  .wh-home:focus-visible {
-    outline: 2px solid rgba(126, 203, 255, 0.7);
-    outline-offset: 2px;
-  }
-  .wh-mark {
-    display: block;
-    width: 1em;
-    height: 1em;
-    overflow: hidden;
-    border-radius: 0.28em;
-  }
-  .fold-help {
-    display: inline-flex;
-  }
-  .chev {
-    margin-left: auto;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    color: rgba(255, 255, 255, 0.55);
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    pointer-events: none;
-  }
-  .chev svg {
-    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  .chev.open svg {
-    transform: rotate(180deg);
-  }
-  .fold-body {
-    overflow: hidden;
-    max-height: 0;
-    transition-property: max-height;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  .fold-clip {
-    display: flex;
-    flex-direction: column;
-    gap: 0.55rem;
-    padding: 0.15rem 0.75rem 0.7rem;
   }
   .head {
     display: flex;

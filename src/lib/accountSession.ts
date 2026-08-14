@@ -77,7 +77,7 @@ export async function clearSession(): Promise<void> {
 }
 
 /** 把 GitHub 头像拉到本机，进不来就退回原地址。 */
-export async function cacheAvatar(url: string | undefined): Promise<string | undefined> {
+async function cacheAvatar(url: string | undefined): Promise<string | undefined> {
   if (!url) return;
   try {
     const res = await fetch(url);

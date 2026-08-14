@@ -6,6 +6,7 @@
   import { faviconUrlFor, hostnameFallback } from '../lib/defaults';
   import { createAppDraft, type AppDraftSnapshot } from '../lib/appDraft';
   import { srcFor } from '../lib/appIcons';
+  import DialogShell from './DialogShell.svelte';
   import GhostTip from './GhostTip.svelte';
 
   let {
@@ -71,11 +72,6 @@
     // aria-modal 不会锁 Tab；打开落到网址框，关掉把焦点还回去。
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopImmediatePropagation();
-        onCancel();
-        return;
-      }
       if (e.key !== 'Tab') return;
       const list = sheetTabbables();
       if (!list.length) return;
@@ -132,14 +128,7 @@
   </GhostTip>
 {/snippet}
 
-<div
-  class="overlay"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="app-dlg-title"
-  transition:fade|global={{ duration: 200 }}
->
-  <button type="button" class="backdrop" aria-label="关闭" onclick={onCancel}></button>
+<DialogShell labelledBy="app-dlg-title" zIndex={70} fadeMs={200} onClose={onCancel}>
   <form
     bind:this={sheetEl}
     class="sheet ios-sheet"
@@ -276,25 +265,9 @@
       </div>
     </div>
   </form>
-</div>
+</DialogShell>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 70;
-    display: grid;
-    place-items: center;
-  }
-  .backdrop {
-    appearance: none;
-    position: absolute;
-    inset: 0;
-    border: 0;
-    padding: 0;
-    background: rgba(0, 0, 0, 0.28);
-    cursor: default;
-  }
   .sheet {
     position: relative;
     z-index: 1;

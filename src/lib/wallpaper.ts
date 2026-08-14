@@ -38,18 +38,18 @@ export function todayLocal(): string {
   return `${y}-${m}-${day}`;
 }
 
-export function needsDailyWallpaper(wallpaper: WallpaperState, today = todayLocal()): boolean {
+function needsDailyWallpaper(wallpaper: WallpaperState, today = todayLocal()): boolean {
   if (!wallpaper.imageUrl) return true;
   return wallpaper.fetchedOn !== today;
 }
 
 /** Wallhaven rejects purity=000; fall back to SFW-only. */
-export function purityParam(p: Settings['wallhavenPurity']): string {
+function purityParam(p: Settings['wallhavenPurity']): string {
   const bits = `${p.sfw ? '1' : '0'}${p.sketchy ? '1' : '0'}${p.nsfw ? '1' : '0'}`;
   return bits === '000' ? '100' : bits;
 }
 
-export function categoriesParam(c: Settings['wallhavenCategories']): string {
+function categoriesParam(c: Settings['wallhavenCategories']): string {
   const bits = `${c.general ? '1' : '0'}${c.anime ? '1' : '0'}${c.people ? '1' : '0'}`;
   return bits === '000' ? '111' : bits;
 }
@@ -89,7 +89,7 @@ function hitAllowed(hit: WallhavenSearchHit, settings: Settings): boolean {
   return settings.wallhavenPurity.sfw;
 }
 
-export function displayMaxWidth(): number {
+function displayMaxWidth(): number {
   if (typeof window === 'undefined') return 1920;
   const w = Math.round(window.screen.width * (window.devicePixelRatio || 1));
   return Math.min(Math.max(w, 1280), MAX_DISPLAY_WIDTH);
@@ -111,7 +111,7 @@ async function fetchBlob(url: string): Promise<Blob> {
 }
 
 /** Resize to display width and encode as JPEG data URL (png sources still ok). */
-export async function toDisplayDataUrl(source: Blob | string): Promise<string> {
+async function toDisplayDataUrl(source: Blob | string): Promise<string> {
   const blob = typeof source === 'string' ? await fetchBlob(source) : source;
   const bitmap = await createImageBitmap(blob);
   const maxW = displayMaxWidth();

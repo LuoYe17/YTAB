@@ -22,7 +22,7 @@ export const SUCCESS_HOLD_MS = 650;
 
 const ICON_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
 
-export type AppDraftPhase = 'idle' | 'scan' | 'success';
+type AppDraftPhase = 'idle' | 'scan' | 'success';
 
 export type AppDraftSnapshot = {
   url: string;

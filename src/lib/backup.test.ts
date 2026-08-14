@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { exportYtab } from './backup';
 import { faviconUrlFor } from './defaults';
 import { META_ICON_PREFIX } from './iconPersist';
@@ -25,65 +25,61 @@ async function readExport(blob: Blob) {
 }
 
 describe('exportYtab', () => {
-  it('includeIcons false：无 icons/ 文件，json 不含 data: / idb: / icon:', async () => {
-    const http = 'https://cdn.example.com/a.png';
-    const blob = await exportYtab(
-      {
-        ...createEmptyState(),
-        pages: [[
-          app('a', 'data:image/png;base64,AAAA'),
-          folder('f', [app('b', `${META_ICON_PREFIX}b`)]),
-          app('c', http),
-        ]],
-      },
-      { includeIcons: false, includeApiKey: false },
-    );
+  it('data: 图标进 ZIP，文件夹里的一并打包', async () => {
+    const blob = await exportYtab({
+      ...createEmptyState(),
+      pages: [[
+        app('a', 'data:image/png;base64,AAAA'),
+        folder('f', [app('b', 'data:image/png;base64,BBBB')]),
+      ]],
+    });
     const { state, iconPaths } = await readExport(blob);
-    expect(iconPaths).toEqual([]);
-    const json = JSON.stringify(state);
-    expect(json.includes('data:')).toBe(false);
-    expect(json.includes('idb:')).toBe(false);
-    expect(json.includes('icon:')).toBe(false);
-    expect(state.pages[0]![0]?.kind === 'app' && state.pages[0]![0].icon).toBe(
-      faviconUrlFor('https://example.com/a'),
-    );
+
+    expect(iconPaths.some((p) => p.startsWith('icons/a.'))).toBe(true);
+    expect(iconPaths.some((p) => p.startsWith('icons/b.'))).toBe(true);
+    expect(state.pages[0]![0]?.kind === 'app' && state.pages[0]![0].icon).toBe('icon:a');
     const f = state.pages[0]![1];
     expect(f?.kind).toBe('folder');
     if (f?.kind !== 'folder') return;
-    expect(f.children[0]?.icon).toBe(faviconUrlFor('https://example.com/b'));
-    expect(state.pages[0]![2]?.kind === 'app' && state.pages[0]![2].icon).toBe(http);
+    expect(f.children[0]?.icon).toBe('icon:b');
   });
 
-  it('includeIcons true：data: 进 ZIP；未打包的 idb: 改成 favicon', async () => {
-    const blob = await exportYtab(
-      {
+  it('没打包成的 idb: 改成站点 favicon，抓不到的 http 保留原址', async () => {
+    // 断网导出：远程图抓不下来，引用不能因此丢失。
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('offline');
+    });
+    const http = 'https://cdn.example.com/a.png';
+    try {
+      const blob = await exportYtab({
         ...createEmptyState(),
-        pages: [[app('a', 'data:image/png;base64,AAAA'), app('b', `${META_ICON_PREFIX}b`)]],
-      },
-      { includeIcons: true, includeApiKey: false },
-    );
-    const { state, iconPaths } = await readExport(blob);
-    expect(iconPaths.some((p) => p.startsWith('icons/a.'))).toBe(true);
-    expect(state.pages[0]![0]?.kind === 'app' && state.pages[0]![0].icon).toBe('icon:a');
-    expect(state.pages[0]![1]?.kind === 'app' && state.pages[0]![1].icon).toBe(
-      faviconUrlFor('https://example.com/b'),
-    );
+        pages: [[app('b', `${META_ICON_PREFIX}b`), app('c', http)]],
+      });
+      const { state, iconPaths } = await readExport(blob);
+
+      expect(iconPaths).toEqual([]);
+      expect(state.pages[0]![0]?.kind === 'app' && state.pages[0]![0].icon).toBe(
+        faviconUrlFor('https://example.com/b'),
+      );
+      expect(state.pages[0]![1]?.kind === 'app' && state.pages[0]![1].icon).toBe(http);
+      expect(JSON.stringify(state).includes(META_ICON_PREFIX)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
-  it('不含密钥时测通标记一并清掉，避免勾还在密钥却空', async () => {
-    const blob = await exportYtab(
-      {
-        ...createEmptyState(),
-        settings: {
-          ...createEmptyState().settings,
-          wallhavenApiKey: 'secret',
-          wallhavenKeyOk: true,
-        },
+  it('密钥留在包里，不在这一层剥掉（加密发生在 accountBackup）', async () => {
+    const blob = await exportYtab({
+      ...createEmptyState(),
+      settings: {
+        ...createEmptyState().settings,
+        wallhavenApiKey: 'secret',
+        wallhavenKeyOk: true,
       },
-      { includeIcons: false, includeApiKey: false },
-    );
+    });
     const { state } = await readExport(blob);
-    expect(state.settings.wallhavenApiKey).toBe('');
-    expect(state.settings.wallhavenKeyOk).toBe(false);
+
+    expect(state.settings.wallhavenApiKey).toBe('secret');
+    expect(state.settings.wallhavenKeyOk).toBe(true);
   });
 });

@@ -13,6 +13,7 @@
     onEditApp,
     onEvent,
     hitRoot = null,
+    gridEl = $bindable(null),
   }: {
     items: GridItem[];
     pageIndex?: number;
@@ -23,6 +24,8 @@
     onEvent: (event: AppGridEvent) => void;
     /** 落点带；起始页传 main，这样时钟/搜索上方也能插到首位 */
     hitRoot?: HTMLElement | null;
+    /** 交给起始页，供文件夹拖出算落点 */
+    gridEl?: HTMLElement | null;
   } = $props();
 
   let menu = $state<{ x: number; y: number; target: GridItem | null } | null>(null);
@@ -78,12 +81,12 @@
     {items}
     {pageIndex}
     {pageCount}
-    enableMerge={true}
     scope="page"
     {onActivate}
     {onEvent}
     {onGridContextMenu}
     hitRoot={hitRoot ?? slotEl}
+    bind:gridEl
   />
 
   {#if pageCount > 1}

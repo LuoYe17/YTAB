@@ -9,8 +9,14 @@ import {
   importRawKey,
   type CipherBundle,
 } from './accountCrypto';
-import { loadSession, saveSession, sessionUnlocked, type AccountSession } from './accountSession';
-import { exportYtab, FULL_EXPORT, importYtab } from './backup';
+import {
+  loadSession,
+  patchSession,
+  saveSession,
+  sessionUnlocked,
+  type AccountSession,
+} from './accountSession';
+import { exportYtab, importYtab } from './backup';
 import { plainNotice } from './notice';
 import type { YtabState } from './types';
 
@@ -21,7 +27,7 @@ let pending: YtabState | null = null;
 let inflight: Promise<void> = Promise.resolve();
 
 async function packPlain(state: YtabState): Promise<Uint8Array> {
-  const blob = await exportYtab(state, FULL_EXPORT);
+  const blob = await exportYtab(state);
   return new Uint8Array(await blob.arrayBuffer());
 }
 
@@ -120,7 +126,8 @@ async function pushNow(state: YtabState): Promise<void> {
   try {
     const bundle = await remakeBundle(state, session);
     await putBackup(session.token, bundle);
-    await saveSession({ ...session, hasBackup: true, uploadedAt: new Date().toISOString() });
+    // 后台上传要几秒，回来时用户可能已经登出、或刚补过头像：只补这两个字段。
+    await patchSession(session, { hasBackup: true, uploadedAt: new Date().toISOString() });
   } catch (err) {
     console.error('[ytab] account backup push failed', err);
     // 令牌只活 30 天；过期后服务器只会说「未登录」，这里换成用户能行动的话。

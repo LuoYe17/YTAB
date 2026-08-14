@@ -1,24 +1,24 @@
-<script lang="ts">
+<script lang="ts" generics="S extends Scope">
+  import { onDestroy } from 'svelte';
   import { flip } from 'svelte/animate';
   import { DragDropProvider, DragOverlay } from '@dnd-kit/svelte';
   import type { GridItem } from '../lib/types';
-  import type { AppGridEvent } from '../lib/appGrid';
   import { srcFor } from '../lib/appIcons';
+  import { readGridMetrics, type HitBand } from '../lib/gridInsertGeometry';
+  import { realClock } from '../lib/clock';
   import {
-    cellHit,
-    hitEdgeRelative,
-    insertIndexForDropBand,
-    insertIndexFromHit,
-    normalizedInRect,
-    readGridMetrics,
-  } from '../lib/gridInsertGeometry';
+    createGridDragSession,
+    type DragEventFor,
+    type DragVisuals,
+    type PageDropTarget,
+    type Scope,
+  } from '../lib/gridDrag';
   import GridTile from './GridTile.svelte';
 
   let {
     items,
-    enableMerge = true,
     compact = false,
-    scope = 'page',
+    scope,
     pageIndex = 0,
     pageCount = 1,
     onActivate,
@@ -27,17 +27,18 @@
     onGridContextMenu,
     outsideRoot = null,
     hitRoot = null,
+    readPageDropTarget,
+    gridEl = $bindable(null),
   }: {
     items: GridItem[];
-    /** false = 仅换位（文件夹内部） */
-    enableMerge?: boolean;
+    /** compact 只改格子尺寸，不影响拖拽语义 */
     compact?: boolean;
-    /** 换位事件走 scope，不跟 compact：compact 只改格子尺寸。 */
-    scope?: 'page' | 'folder';
+    /** page = 主网格（可合文件夹、可翻页）；folder = 文件夹内（仅换位与拖出） */
+    scope: S;
     pageIndex?: number;
     pageCount?: number;
     onActivate: (item: GridItem) => void;
-    onEvent: (event: AppGridEvent) => void;
+    onEvent: (event: DragEventFor<S>) => void;
     /** 拖出壳外停住：只关视觉壳，不是 App 网格事件 */
     onOutsideDwell?: () => void;
     onGridContextMenu?: (e: MouseEvent, item: GridItem | null) => void;
@@ -45,129 +46,62 @@
     outsideRoot?: HTMLElement | null;
     /** 比网格更宽的落点带；起始页为 grid-slot，文件夹为面板 */
     hitRoot?: HTMLElement | null;
+    /** 文件夹拖出时的主网格落点；由持有主网格的宿主提供 */
+    readPageDropTarget?: (excludeId: string) => PageDropTarget | null;
+    /** 交给宿主，供文件夹算拖出落点 */
+    gridEl?: HTMLElement | null;
   } = $props();
 
   const flipMs = 300;
-  const MERGE_DWELL_MS = 400;
-  const INSERT_DWELL_MS = 220;
-  const OUTSIDE_DWELL_MS = 320;
-  const PAGE_EDGE_PX = 44;
-  const PAGE_FLIP_DWELL_MS = 400;
-  const PAGE_FLIP_COOLDOWN_MS = 650;
 
-  let activeId = $state<string | null>(null);
-  let dwellTargetId = $state<string | null>(null);
-  let mergeReady = $state(false);
-  let pointer = $state({ x: 0, y: 0 });
+  let visuals = $state<DragVisuals>({
+    activeId: null,
+    dwellTargetId: null,
+    mergeReady: false,
+    edgeSide: null,
+  });
   let suppressClick = $state(false);
-  let edgeSide = $state<'left' | 'right' | null>(null);
-  /** 已触发「拖出关窗」，拖拽会话仍继续 */
-  let outsideLocked = false;
+  /** dnd-kit 偶尔不带坐标，用上一次的顶上 */
+  let lastX = 0;
+  let lastY = 0;
 
-  let dwellTimer: ReturnType<typeof setTimeout> | null = null;
-  let insertTimer: ReturnType<typeof setTimeout> | null = null;
-  let edgeTimer: ReturnType<typeof setTimeout> | null = null;
-  let outsideTimer: ReturnType<typeof setTimeout> | null = null;
-  let pendingInsert: { sourceId: string; targetId: string; insertAt: number } | null = null;
-  let pendingEdge: 'left' | 'right' | null = null;
-  let lastInsertKey = '';
-  let flipCooldownUntil = 0;
-  let gridEl = $state<HTMLElement | null>(null);
-
-  function clearDwell() {
-    if (dwellTimer) clearTimeout(dwellTimer);
-    dwellTimer = null;
-    dwellTargetId = null;
-    mergeReady = false;
+  function rectOf(el: HTMLElement | null): HitBand | null {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
   }
 
-  function clearInsertPending() {
-    if (insertTimer) clearTimeout(insertTimer);
-    insertTimer = null;
-    pendingInsert = null;
-  }
+  // scope 挂载后不再变（主网格恒 page，文件夹恒 folder），会话按它建一次就够。
+  /* svelte-ignore state_referenced_locally */
+  const session = createGridDragSession<S>({
+    scope,
+    clock: realClock,
+    getItems: () => items,
+    getPaging: () => ({ pageIndex, pageCount }),
+    readMetrics: () => (gridEl ? readGridMetrics(gridEl) : null),
+    readHitBand: () => rectOf(hitRoot ?? outsideRoot ?? gridEl),
+    readOutsideRect: () => rectOf(outsideRoot),
+    readPageDropTarget: (excludeId) => readPageDropTarget?.(excludeId) ?? null,
+    viewportWidth: () => window.innerWidth,
+    onEvent: (event) => onEvent(event),
+    onVisuals: (next) => {
+      visuals = next;
+    },
+    onOutsideDwell: () => onOutsideDwell?.(),
+  });
 
-  function clearEdgePending() {
-    if (edgeTimer) clearTimeout(edgeTimer);
-    edgeTimer = null;
-    pendingEdge = null;
-    edgeSide = null;
-  }
-
-  function clearOutsidePending() {
-    if (outsideTimer) clearTimeout(outsideTimer);
-    outsideTimer = null;
-  }
+  onDestroy(() => session.dispose());
 
   function activeItem(): GridItem | null {
-    return items.find((i) => i.id === activeId) ?? null;
+    return items.find((i) => i.id === visuals.activeId) ?? null;
   }
 
-  function canMerge(source: GridItem, target: GridItem): boolean {
-    if (!enableMerge) return false;
-    if (source.id === target.id) return false;
-    if (source.kind !== 'app') return false;
-    return target.kind === 'app' || target.kind === 'folder';
-  }
-
-  function startDwell(sourceId: string, targetId: string) {
-    const source = items.find((i) => i.id === sourceId);
-    const target = items.find((i) => i.id === targetId);
-    if (!source || !target || !canMerge(source, target)) {
-      clearDwell();
-      return;
+  function track(x: number, y: number) {
+    if (x || y) {
+      lastX = x;
+      lastY = y;
     }
-    if (dwellTargetId === targetId && (dwellTimer || mergeReady)) return;
-    if (dwellTimer) clearTimeout(dwellTimer);
-    dwellTargetId = targetId;
-    mergeReady = false;
-    dwellTimer = setTimeout(() => {
-      mergeReady = true;
-    }, MERGE_DWELL_MS);
-  }
-
-  function insertBeforeIndex(sourceId: string, insertAt: number): boolean {
-    const from = items.findIndex((i) => i.id === sourceId);
-    if (from < 0) return false;
-    let to = insertAt;
-    if (from < to) to -= 1;
-    to = Math.max(0, Math.min(to, items.length - 1));
-    if (from === to) return false;
-    const next = [...items];
-    const [moved] = next.splice(from, 1);
-    if (!moved) return false;
-    next.splice(to, 0, moved);
-    const order = next.map((i) => i.id);
-    onEvent(scope === 'folder' ? { type: 'reorderFolder', order } : { type: 'reorderPage', order });
-    return true;
-  }
-
-  function scheduleInsert(sourceId: string, targetKey: string, insertAt: number) {
-    const key = `${sourceId}:${targetKey}:${insertAt}`;
-    if (key === lastInsertKey) {
-      clearInsertPending();
-      return;
-    }
-    if (
-      pendingInsert &&
-      pendingInsert.sourceId === sourceId &&
-      pendingInsert.targetId === targetKey &&
-      pendingInsert.insertAt === insertAt &&
-      insertTimer
-    ) {
-      return;
-    }
-    clearInsertPending();
-    pendingInsert = { sourceId, targetId: targetKey, insertAt };
-    insertTimer = setTimeout(() => {
-      const job = pendingInsert;
-      insertTimer = null;
-      pendingInsert = null;
-      if (!job || job.sourceId !== activeId) return;
-      if (insertBeforeIndex(job.sourceId, job.insertAt)) {
-        lastInsertKey = `${job.sourceId}:${job.targetId}:${job.insertAt}`;
-      }
-    }, INSERT_DWELL_MS);
+    session.move(lastX, lastY);
   }
 
   function coordsOf(event: {
@@ -178,111 +112,20 @@
     if (cur && typeof cur.x === 'number' && typeof cur.y === 'number') {
       return { x: cur.x, y: cur.y };
     }
-    return pointer;
+    return { x: 0, y: 0 };
   }
 
+  // 只记坐标：判定跟着 dnd-kit 的节拍走，别让每个原生 pointermove 都去量一次网格。
   function onPointerTrack(e: PointerEvent) {
-    pointer = { x: e.clientX, y: e.clientY };
-  }
-
-  function doPageFlip(side: 'left' | 'right') {
-    if (!activeId || pageCount <= 1) return;
-    const item = activeItem();
-    if (!item) return;
-    const toPage = pageIndex + (side === 'left' ? -1 : 1);
-    if (toPage < 0 || toPage >= pageCount) return;
-    clearEdgePending();
-    clearDwell();
-    clearInsertPending();
-    flipCooldownUntil = Date.now() + PAGE_FLIP_COOLDOWN_MS;
-    onEvent({ type: 'pageFlip', toPage });
-  }
-
-  /** @returns true 若指针在翻页热区（并处理计时） */
-  function tryPageEdge(): boolean {
-    if (!activeId || pageCount <= 1) {
-      clearEdgePending();
-      return false;
+    if (e.clientX || e.clientY) {
+      lastX = e.clientX;
+      lastY = e.clientY;
     }
-    if (Date.now() < flipCooldownUntil) {
-      clearEdgePending();
-      return false;
-    }
-    const x = pointer.x;
-    const w = window.innerWidth;
-    let side: 'left' | 'right' | null = null;
-    if (x <= PAGE_EDGE_PX && pageIndex > 0) side = 'left';
-    else if (x >= w - PAGE_EDGE_PX && pageIndex < pageCount - 1) side = 'right';
-
-    if (!side) {
-      clearEdgePending();
-      return false;
-    }
-
-    clearDwell();
-    clearInsertPending();
-    edgeSide = side;
-    if (pendingEdge === side && edgeTimer) return true;
-
-    if (edgeTimer) clearTimeout(edgeTimer);
-    pendingEdge = side;
-    edgeTimer = setTimeout(() => {
-      edgeTimer = null;
-      pendingEdge = null;
-      doPageFlip(side);
-    }, PAGE_FLIP_DWELL_MS);
-    return true;
-  }
-
-  /** 拖出 outsideRoot 外并停住：只通知关窗，拖拽与浮层继续跟手 */
-  function tryOutsideDwell(): boolean {
-    if (!activeId || !outsideRoot) {
-      if (!outsideLocked) clearOutsidePending();
-      return false;
-    }
-    if (outsideLocked) {
-      clearDwell();
-      clearInsertPending();
-      clearEdgePending();
-      return true;
-    }
-
-    const rect = outsideRoot.getBoundingClientRect();
-    const { x, y } = pointer;
-    const inside =
-      x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-    if (inside) {
-      clearOutsidePending();
-      return false;
-    }
-
-    clearDwell();
-    clearInsertPending();
-    clearEdgePending();
-    if (outsideTimer) return true;
-
-    outsideTimer = setTimeout(() => {
-      outsideTimer = null;
-      if (!activeId || outsideLocked) return;
-      outsideLocked = true;
-      clearDwell();
-      clearInsertPending();
-      clearEdgePending();
-      onOutsideDwell?.();
-    }, OUTSIDE_DWELL_MS);
-    return true;
   }
 
   function onDragStart(event: { operation: { source?: { id: string | number } | null } }) {
-    activeId = String(event.operation.source?.id ?? '');
-    lastInsertKey = '';
-    outsideLocked = false;
-    clearInsertPending();
-    clearDwell();
-    clearEdgePending();
-    clearOutsidePending();
     suppressClick = false;
-    onEvent({ type: 'beginDrag', itemId: activeId });
+    session.start(String(event.operation.source?.id ?? ''));
     window.addEventListener('pointermove', onPointerTrack, { passive: true });
   }
 
@@ -294,8 +137,7 @@
     };
   }) {
     const c = coordsOf(event);
-    if (c.x || c.y) pointer = c;
-    applyHover();
+    track(c.x, c.y);
   }
 
   function onDragOver(event: {
@@ -306,187 +148,20 @@
     };
   }) {
     const c = coordsOf(event);
-    if (c.x || c.y) pointer = c;
-    applyHover();
-  }
-
-  function applyHover() {
-    if (tryOutsideDwell()) return;
-    if (tryPageEdge()) return;
-
-    const sourceId = activeId;
-    if (!sourceId) {
-      clearDwell();
-      clearInsertPending();
-      return;
-    }
-
-    const { x, y } = pointer;
-    const m = gridEl ? readGridMetrics(gridEl) : null;
-    if (m) {
-      const cell = cellHit(x, y, m);
-      if (cell && cell.index < items.length) {
-        const targetId = items[cell.index]?.id ?? null;
-        if (!targetId || sourceId === targetId) {
-          clearDwell();
-          clearInsertPending();
-          return;
-        }
-        const source = items.find((i) => i.id === sourceId);
-        const target = items.find((i) => i.id === targetId);
-        if (!source || !target) {
-          clearDwell();
-          clearInsertPending();
-          return;
-        }
-        if (canMerge(source, target) && hitEdgeRelative(cell.nx, cell.ny) === 'center') {
-          clearInsertPending();
-          startDwell(sourceId, targetId);
-          return;
-        }
-        clearDwell();
-        const insertAt = insertIndexFromHit(cell.index, hitEdgeRelative(cell.nx, cell.ny), 'skip');
-        if (insertAt == null) {
-          clearInsertPending();
-          return;
-        }
-        scheduleInsert(sourceId, targetId, insertAt);
-        return;
-      }
-      const root = hitRoot ?? outsideRoot ?? gridEl;
-      if (!root) {
-        clearDwell();
-        clearInsertPending();
-        return;
-      }
-      const br = root.getBoundingClientRect();
-      const at = insertIndexForDropBand(
-        x,
-        y,
-        m,
-        items.length,
-        'skip',
-        { left: br.left, top: br.top, right: br.right, bottom: br.bottom },
-      );
-      if (at == null) {
-        clearDwell();
-        clearInsertPending();
-        return;
-      }
-      clearDwell();
-      scheduleInsert(sourceId, at === 0 ? '__start' : '__end', at);
-      return;
-    }
-
-    const targetEl = document.elementFromPoint(pointer.x, pointer.y);
-    const tile = targetEl?.closest?.('[data-tile-id]') as HTMLElement | null;
-    const targetId = tile?.dataset.tileId ?? null;
-
-    if (!tile || !targetId || sourceId === targetId) {
-      clearDwell();
-      clearInsertPending();
-      return;
-    }
-
-    const source = items.find((i) => i.id === sourceId);
-    const target = items.find((i) => i.id === targetId);
-    if (!source || !target) {
-      clearDwell();
-      clearInsertPending();
-      return;
-    }
-
-    const { nx, ny } = normalizedInRect(x, y, tile.getBoundingClientRect());
-    if (canMerge(source, target) && hitEdgeRelative(nx, ny) === 'center') {
-      clearInsertPending();
-      startDwell(sourceId, targetId);
-      return;
-    }
-
-    clearDwell();
-    const insertAt = insertIndexFromHit(
-      items.findIndex((i) => i.id === targetId),
-      hitEdgeRelative(nx, ny),
-      'skip',
-    );
-    if (insertAt == null) {
-      clearInsertPending();
-      return;
-    }
-    scheduleInsert(sourceId, targetId, insertAt);
+    track(c.x, c.y);
   }
 
   function onDragEnd(event: { canceled?: boolean }) {
     window.removeEventListener('pointermove', onPointerTrack);
-    const sourceId = activeId;
-    const ready = mergeReady;
-    const dwellId = dwellTargetId;
-    const dropX = pointer.x;
-    const dropY = pointer.y;
-    const wasOutside = outsideLocked;
-    clearDwell();
-    clearInsertPending();
-    clearEdgePending();
-    clearOutsidePending();
-    outsideLocked = false;
-    activeId = null;
     suppressClick = true;
     setTimeout(() => {
       suppressClick = false;
     }, 0);
-
-    if (wasOutside) {
-      // 空 sourceId 无法 eject，必须 cancel 才能清掉 beginDrag 留下的 dragSnapshot。
-      if (event.canceled || !sourceId) {
-        onEvent({ type: 'cancelDrag' });
-        return;
-      }
-      onEvent({ type: 'eject', appId: sourceId, insertAt: insertAtOnPage(dropX, dropY, sourceId) });
-      return;
-    }
-
-    if (event.canceled) {
-      onEvent({ type: 'cancelDrag' });
-      return;
-    }
-
-    if (ready && sourceId && dwellId && enableMerge) {
-      const source = items.find((i) => i.id === sourceId);
-      const target = items.find((i) => i.id === dwellId);
-      if (source?.kind === 'app' && target?.kind === 'app') {
-        onEvent({ type: 'merge', fromId: sourceId, ontoId: dwellId });
-      } else if (source?.kind === 'app' && target?.kind === 'folder') {
-        onEvent({ type: 'intoFolder', appId: sourceId, folderId: dwellId });
-      }
-      return;
-    }
-
-    onEvent({ type: 'endDrag' });
-  }
-
-  /** 从文件夹拖出落到主网格；中心算插入（已经不会合文件夹）。 */
-  function insertAtOnPage(clientX: number, clientY: number, excludeId: string): number {
-    const pageGrid = document.querySelector<HTMLElement>('[data-ytab-grid="page"]');
-    const slot = document.querySelector<HTMLElement>('[data-ytab-drop-band]');
-    const m = pageGrid ? readGridMetrics(pageGrid) : null;
-    const host = slot ?? pageGrid;
-    if (!m || !host) return 0;
-    const occupied = [...pageGrid!.querySelectorAll('[data-tile-id]')].filter(
-      (el) => el.getAttribute('data-tile-id') !== excludeId,
-    ).length;
-    const br = host.getBoundingClientRect();
-    return (
-      insertIndexForDropBand(clientX, clientY, m, occupied, 'after', {
-        left: br.left,
-        top: br.top,
-        right: br.right,
-        bottom: br.bottom,
-      }) ?? occupied
-    );
+    session.end(event.canceled === true);
   }
 
   function onTileActivate(item: GridItem) {
-    if (suppressClick || activeId) return;
+    if (suppressClick || visuals.activeId) return;
     onActivate(item);
   }
 
@@ -505,7 +180,6 @@
     bind:this={gridEl}
     class="grid"
     class:compact
-    data-ytab-grid={scope}
     role="presentation"
     oncontextmenu={onContextMenu}
   >
@@ -513,9 +187,9 @@
       <div animate:flip={{ duration: flipMs }}>
         <GridTile
           {item}
-          merging={mergeReady && dwellTargetId === item.id}
-          dwelling={!mergeReady && dwellTargetId === item.id}
-          dragging={activeId === item.id}
+          merging={visuals.mergeReady && visuals.dwellTargetId === item.id}
+          dwelling={!visuals.mergeReady && visuals.dwellTargetId === item.id}
+          dragging={visuals.activeId === item.id}
           onActivate={() => onTileActivate(item)}
         />
       </div>
@@ -554,8 +228,13 @@
   </DragOverlay>
 </DragDropProvider>
 
-{#if edgeSide}
-  <div class="page-edge" class:left={edgeSide === 'left'} class:right={edgeSide === 'right'} aria-hidden="true"></div>
+{#if visuals.edgeSide}
+  <div
+    class="page-edge"
+    class:left={visuals.edgeSide === 'left'}
+    class:right={visuals.edgeSide === 'right'}
+    aria-hidden="true"
+  ></div>
 {/if}
 
 <style>

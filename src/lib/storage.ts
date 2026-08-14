@@ -1,9 +1,14 @@
-/** 持久化：chrome.storage 只放小 meta；壁纸与 App 图标像素在 IndexedDB。 */
+/**
+ * 持久化：chrome.storage 只放小 meta；壁纸与 App 图标像素在 IndexedDB。
+ *
+ * 两种介质的不变量不同，因此分成两个口注入：meta 装不下像素，kv 需要事务与 GC。
+ * 写入顺序、半失败策略、迁移与合并写都在 `createPersist` 里，可用内存 adapter 整条验证。
+ */
 
 import { storage } from 'wxt/utils/storage';
 import { applyBundledIcons, bundledIconDataUrls, pack } from './appIcons';
 import { createEmptyState, mergeSettings, type YtabState } from './types';
-import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, staleIconKeys } from './iconPersist';
+import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, isStaleIconKey } from './iconPersist';
 
 const META_KEY = 'local:ytab:v1' as const;
 /** Legacy key — read once to migrate, then clear. */
@@ -14,131 +19,43 @@ const IDB_VERSION = 1;
 const IDB_STORE = 'kv';
 const IDB_WALLPAPER = 'wallpaperImage';
 
-export const ytabStore = storage.defineItem<YtabState>(META_KEY, {
-  fallback: createEmptyState(),
-});
+/** chrome.storage 侧：只放小 meta。像素挤进来会打爆配额，把整包状态一起赔进去。 */
+export type MetaStore = {
+  get(): Promise<YtabState | null>;
+  set(state: YtabState): Promise<void>;
+  /** 老版本把壁纸像素塞在 chrome.storage 里，读一次即迁走。 */
+  getLegacyWallpaper(): Promise<string>;
+  clearLegacyWallpaper(): Promise<void>;
+};
 
-const legacyWallpaperStore = storage.defineItem<string>(LEGACY_WALLPAPER_KEY, {
-  fallback: '',
-});
+/** IndexedDB 侧：壁纸与 App 图标像素。 */
+export type KvStore = {
+  get(key: string): Promise<string>;
+  set(key: string, value: string): Promise<void>;
+  keys(): Promise<string[]>;
+  /**
+   * 同一次事务里写入 entries，并删掉现存 key 中 `dropKey` 判真的那些。
+   * 传谓词而不是 key 列表：列举必须发生在事务内，半截 IDB 比慢更可怕。
+   */
+  writeBatch(entries: Map<string, string>, dropKey: (key: string) => boolean): Promise<void>;
+};
 
-let writeChain: Promise<void> = Promise.resolve();
-let latest: YtabState | null = null;
-
-function openIdb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error ?? new Error('idb open failed'));
-  });
-}
-
-async function idbGet(key: string): Promise<string> {
-  const db = await openIdb();
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).get(key);
-      req.onsuccess = () => resolve(typeof req.result === 'string' ? req.result : '');
-      req.onerror = () => reject(req.error ?? new Error('idb get failed'));
-    });
-  } finally {
-    db.close();
-  }
-}
-
-async function idbSet(key: string, value: string): Promise<void> {
-  const db = await openIdb();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error ?? new Error('idb set failed'));
-      tx.objectStore(IDB_STORE).put(value, key);
-    });
-  } finally {
-    db.close();
-  }
-}
-
-async function idbGetAllKeys(): Promise<string[]> {
-  const db = await openIdb();
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).getAllKeys();
-      req.onsuccess = () =>
-        resolve((req.result ?? []).filter((k): k is string => typeof k === 'string'));
-      req.onerror = () => reject(req.error ?? new Error('idb keys failed'));
-    });
-  } finally {
-    db.close();
-  }
-}
-
-async function writeWallpaperImage(imageUrl: string): Promise<void> {
-  await idbSet(IDB_WALLPAPER, imageUrl);
-  // Drop legacy chrome.storage copy so it cannot re-bloat / race meta.
-  try {
-    await legacyWallpaperStore.setValue('');
-  } catch {
-    /* ignore */
-  }
-}
-
-async function writeIconBlobs(blobs: Map<string, string>, liveIds: Set<string>): Promise<void> {
-  const db = await openIdb();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      const store = tx.objectStore(IDB_STORE);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error ?? new Error('idb icon write failed'));
-      for (const [id, data] of blobs) {
-        store.put(data, iconIdbKey(id));
-      }
-      const keysReq = store.getAllKeys();
-      keysReq.onsuccess = () => {
-        const keys = (keysReq.result ?? []).filter((k): k is string => typeof k === 'string');
-        for (const key of staleIconKeys(keys, liveIds)) {
-          store.delete(key);
-        }
-      };
-    });
-  } finally {
-    db.close();
-  }
-}
-
-async function readIconBlobs(): Promise<Map<string, string>> {
-  const keys = await idbGetAllKeys();
-  const blobs = new Map<string, string>();
-  for (const key of keys) {
-    if (!key.startsWith(IDB_ICON_PREFIX)) continue;
-    const value = await idbGet(key);
-    if (value) blobs.set(key.slice(IDB_ICON_PREFIX.length), value);
-  }
-  return blobs;
-}
+export type Persist = {
+  load(): Promise<YtabState>;
+  save(state: YtabState): Promise<void>;
+};
 
 /** 落盘步骤。数组顺序即写入顺序，不可重排。 */
-export type PersistStep =
+type PersistStep =
   | { kind: 'wallpaper'; imageUrl: string }
   | { kind: 'icon'; id: string; data: string }
   | { kind: 'meta'; meta: YtabState };
 
 /**
  * 把内存状态拆成有序落盘步骤：壁纸像素 → 各图标像素 → meta。
- * 计划顺序不能改：若先写 meta，像素失败后 `idb:` 引用会永久空白。
- * 执行时图标像素攒齐后与 GC 同事务写入（见 writeNow），避免半截 IDB。
+ * 顺序不能改：若先写 meta，像素失败后 `idb:` 引用会永久空白。
  */
-export function persistPlan(state: YtabState): PersistStep[] {
+function persistPlan(state: YtabState): PersistStep[] {
   const { meta, blobs } = pack(state);
   const steps: PersistStep[] = [{ kind: 'wallpaper', imageUrl: state.wallpaper.imageUrl ?? '' }];
   for (const [id, data] of blobs) {
@@ -148,94 +65,250 @@ export function persistPlan(state: YtabState): PersistStep[] {
   return steps;
 }
 
-// 只执行 plan。壁纸失败必须整单中止：meta 里 fetchedOn/wallhavenId 不能在 imageUrl 仍空时提交。
-// 有新图标像素却写失败则不能发 meta（否则 idb: 成永久空白）。
-async function writeNow(state: YtabState): Promise<void> {
-  const blobs = new Map<string, string>();
-  for (const step of persistPlan(state)) {
-    switch (step.kind) {
-      case 'wallpaper':
-        try {
-          await writeWallpaperImage(step.imageUrl);
-        } catch (err) {
-          console.error('[ytab] wallpaper image persist failed', err);
-          throw err;
-        }
-        break;
-      case 'icon':
-        blobs.set(step.id, step.data);
-        break;
-      case 'meta':
-        // 图标一次写入：同事务落盘，并清掉已删 App 的 key。
-        try {
-          await writeIconBlobs(blobs, collectAppIds(state));
-        } catch (err) {
-          console.error('[ytab] icon persist failed', err);
-          if (blobs.size > 0) return;
-        }
-        await ytabStore.setValue(step.meta);
-        break;
+/**
+ * 起始页状态的读写。调用顺序无要求；连续 `save` 会合并，只落最后一份。
+ *
+ * 失败契约：壁纸像素写失败则整单中止并 reject（meta 里的 fetchedOn / wallhavenId
+ * 不能在 imageUrl 仍空时提交）；有新图标像素却写失败时同样不发 meta，否则 `idb:`
+ * 引用会指向永远不存在的像素。
+ */
+export function createPersist({ meta, kv }: { meta: MetaStore; kv: KvStore }): Persist {
+  let writeChain: Promise<void> = Promise.resolve();
+  let latest: YtabState | null = null;
+
+  async function writeWallpaperImage(imageUrl: string): Promise<void> {
+    await kv.set(IDB_WALLPAPER, imageUrl);
+    // legacy 副本清不掉不影响本次写入，但留着会把配额重新撑起来。
+    try {
+      await meta.clearLegacyWallpaper();
+    } catch {
+      /* ignore */
     }
   }
+
+  /** 图标像素与 GC 同一次事务：写一半再删一半会留下对不上的引用。 */
+  async function writeIconBlobs(blobs: Map<string, string>, liveIds: Set<string>): Promise<void> {
+    const entries = new Map<string, string>();
+    for (const [id, data] of blobs) entries.set(iconIdbKey(id), data);
+    await kv.writeBatch(entries, (key) => isStaleIconKey(key, liveIds));
+  }
+
+  async function readIconBlobs(): Promise<Map<string, string>> {
+    const blobs = new Map<string, string>();
+    for (const key of await kv.keys()) {
+      if (!key.startsWith(IDB_ICON_PREFIX)) continue;
+      const value = await kv.get(key);
+      if (value) blobs.set(key.slice(IDB_ICON_PREFIX.length), value);
+    }
+    return blobs;
+  }
+
+  async function writeNow(state: YtabState): Promise<void> {
+    const blobs = new Map<string, string>();
+    for (const step of persistPlan(state)) {
+      switch (step.kind) {
+        case 'wallpaper':
+          try {
+            await writeWallpaperImage(step.imageUrl);
+          } catch (err) {
+            console.error('[ytab] wallpaper image persist failed', err);
+            throw err;
+          }
+          break;
+        case 'icon':
+          blobs.set(step.id, step.data);
+          break;
+        case 'meta':
+          try {
+            await writeIconBlobs(blobs, collectAppIds(state));
+          } catch (err) {
+            console.error('[ytab] icon persist failed', err);
+            if (blobs.size > 0) return;
+          }
+          await meta.set(step.meta);
+          break;
+      }
+    }
+  }
+
+  async function save(state: YtabState): Promise<void> {
+    latest = state;
+    const run = writeChain.then(async () => {
+      while (latest) {
+        const toWrite = latest;
+        latest = null;
+        await writeNow(toWrite);
+      }
+    });
+    // catch 只修 writeChain，避免一次失败把后续 save 全部卡住；本 Promise 仍 reject。
+    writeChain = run.catch((err) => {
+      console.error('[ytab] saveState failed', err);
+    });
+    await run;
+  }
+
+  async function load(): Promise<YtabState> {
+    const value = await meta.get();
+    const state = value ?? createEmptyState();
+    state.settings = mergeSettings(state.settings);
+
+    let imageUrl = '';
+    try {
+      imageUrl = await kv.get(IDB_WALLPAPER);
+    } catch (err) {
+      console.error('[ytab] wallpaper image read failed', err);
+    }
+
+    // Migrate pixels out of chrome.storage (old single-key or legacy split key).
+    const legacy = (await meta.getLegacyWallpaper()) ?? '';
+    const embedded = state.wallpaper.imageUrl ?? '';
+    const needsWallpaperMigrate = !imageUrl && !!(legacy || embedded);
+    const needsMetaStrip = embedded.startsWith('data:') || embedded.length > 2048;
+    if (needsWallpaperMigrate) {
+      imageUrl = legacy || embedded;
+    }
+
+    let iconBlobs = new Map<string, string>();
+    let pixelsReadable = true;
+    try {
+      iconBlobs = await readIconBlobs();
+    } catch (err) {
+      console.error('[ytab] icon read failed', err);
+      pixelsReadable = false;
+    }
+
+    const hydrated = { ...state, wallpaper: { ...state.wallpaper, imageUrl } };
+    // hydrate / unpack 每次都是新对象；只能拿 applyBundledIcons 的「有改才换引用」判断要不要落盘。
+    const afterHydrate = hydrateIconBlobs(hydrated, iconBlobs);
+    const loaded = applyBundledIcons(afterHydrate, await bundledIconDataUrls());
+    // chrome.storage 里若还嵌着 data: 图标，必须走 save 写入链，先落 IDB 再发 meta。
+    const needsIconMigrate = pack(state).blobs.size > 0;
+    const needsBundledUpgrade = loaded !== afterHydrate;
+    // 像素读不出来时 hydrate 已经退成 favicon；这时候落盘会把 idb: 引用永久抹掉，
+    // 而像素其实还在盘上。宁可这次不写，等下次读得出来再说。
+    if (
+      pixelsReadable &&
+      (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade)
+    ) {
+      await save(loaded);
+    }
+
+    return loaded;
+  }
+
+  return { load, save };
 }
 
-export async function loadState(): Promise<YtabState> {
-  const value = await ytabStore.getValue();
-  const state = value ?? createEmptyState();
-  state.settings = mergeSettings(state.settings);
+function chromeMetaStore(): MetaStore {
+  const metaItem = storage.defineItem<YtabState>(META_KEY, { fallback: createEmptyState() });
+  const legacyItem = storage.defineItem<string>(LEGACY_WALLPAPER_KEY, { fallback: '' });
+  return {
+    get: () => metaItem.getValue(),
+    set: (state) => metaItem.setValue(state),
+    getLegacyWallpaper: () => legacyItem.getValue(),
+    clearLegacyWallpaper: () => legacyItem.setValue(''),
+  };
+}
 
-  let imageUrl = '';
-  try {
-    imageUrl = await idbGet(IDB_WALLPAPER);
-  } catch (err) {
-    console.error('[ytab] wallpaper image read failed', err);
+function idbKvStore(): KvStore {
+  function open(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error ?? new Error('idb open failed'));
+    });
   }
 
-  // Migrate pixels out of chrome.storage (old single-key or legacy split key).
-  const legacy = (await legacyWallpaperStore.getValue()) ?? '';
-  const embedded = state.wallpaper.imageUrl ?? '';
-  const needsWallpaperMigrate = !imageUrl && !!(legacy || embedded);
-  const needsMetaStrip = embedded.startsWith('data:') || embedded.length > 2048;
-  if (needsWallpaperMigrate) {
-    imageUrl = legacy || embedded;
+  async function withDb<T>(run: (db: IDBDatabase) => Promise<T>): Promise<T> {
+    const db = await open();
+    try {
+      return await run(db);
+    } finally {
+      db.close();
+    }
   }
 
-  let iconBlobs = new Map<string, string>();
-  try {
-    iconBlobs = await readIconBlobs();
-  } catch (err) {
-    console.error('[ytab] icon read failed', err);
-  }
+  return {
+    get: (key) =>
+      withDb(
+        (db) =>
+          new Promise<string>((resolve, reject) => {
+            const tx = db.transaction(IDB_STORE, 'readonly');
+            const req = tx.objectStore(IDB_STORE).get(key);
+            req.onsuccess = () => resolve(typeof req.result === 'string' ? req.result : '');
+            req.onerror = () => reject(req.error ?? new Error('idb get failed'));
+          }),
+      ),
 
-  const hydrated = { ...state, wallpaper: { ...state.wallpaper, imageUrl } };
-  // hydrate / unpack 每次都是新对象；只能拿 applyBundledIcons 的「有改才换引用」判断要不要落盘。
-  const afterHydrate = hydrateIconBlobs(hydrated, iconBlobs);
-  const loaded = applyBundledIcons(afterHydrate, await bundledIconDataUrls());
-  // chrome.storage 里若还嵌着 data: 图标，必须走 saveState 写入链，先落 IDB 再发 meta。
-  const needsIconMigrate = pack(state).blobs.size > 0;
-  const needsBundledUpgrade = loaded !== afterHydrate;
-  if (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade) {
-    await saveState(loaded);
-  }
+    set: (key, value) =>
+      withDb(
+        (db) =>
+          new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_STORE, 'readwrite');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error ?? new Error('idb set failed'));
+            tx.objectStore(IDB_STORE).put(value, key);
+          }),
+      ),
 
-  return loaded;
+    keys: () =>
+      withDb(
+        (db) =>
+          new Promise<string[]>((resolve, reject) => {
+            const tx = db.transaction(IDB_STORE, 'readonly');
+            const req = tx.objectStore(IDB_STORE).getAllKeys();
+            req.onsuccess = () =>
+              resolve((req.result ?? []).filter((k): k is string => typeof k === 'string'));
+            req.onerror = () => reject(req.error ?? new Error('idb keys failed'));
+          }),
+      ),
+
+    writeBatch: (entries, dropKey) =>
+      withDb(
+        (db) =>
+          new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_STORE, 'readwrite');
+            const store = tx.objectStore(IDB_STORE);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error ?? new Error('idb batch write failed'));
+            for (const [key, value] of entries) store.put(value, key);
+            const keysReq = store.getAllKeys();
+            keysReq.onsuccess = () => {
+              for (const key of keysReq.result ?? []) {
+                if (typeof key === 'string' && dropKey(key)) store.delete(key);
+              }
+            };
+          }),
+      ),
+  };
+}
+
+/** 懒建生产实例：`defineItem` 会摸扩展运行时，不该在 import 本模块时就发生。 */
+let production: Persist | null = null;
+
+function persist(): Persist {
+  production ??= createPersist({ meta: chromeMetaStore(), kv: idbKvStore() });
+  return production;
 }
 
 /**
- * 排队写入。`writeNow` 抛错时本 Promise reject（调用方才能提示失败）；
- * catch 只修 writeChain，避免一次失败把后续 save 全部卡住。
+ * 读出整份状态：meta 补默认设置，像素从 IndexedDB 填回，顺带迁移旧格式。
+ * 像素读失败时图标退回站点 favicon，且**不落盘**，免得把还在盘上的像素引用抹掉。
  */
-export async function saveState(state: YtabState): Promise<void> {
-  latest = state;
-  const run = writeChain.then(async () => {
-    while (latest) {
-      const toWrite = latest;
-      latest = null;
-      await writeNow(toWrite);
-    }
-  });
-  writeChain = run.catch((err) => {
-    console.error('[ytab] saveState failed', err);
-  });
-  await run;
+export function loadState(): Promise<YtabState> {
+  return persist().load();
+}
+
+/**
+ * 落盘整份状态。连续调用会合并，只写最后一份。
+ * 壁纸像素写失败会 reject（调用方要让用户知道），图标像素写失败则不提交 meta。
+ */
+export function saveState(state: YtabState): Promise<void> {
+  return persist().save(state);
 }

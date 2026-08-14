@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "src/entrypoints/background.ts",
+        "src/entrypoints/newtab/index.html",
+        "src/entrypoints/newtab/main.ts",
+        "src/**/*.test.ts"
+      ],
+      "ignoreDependencies": ["@tsconfig/svelte", "tslib"],
+      "project": ["src/**/*.{ts,svelte}"]
+    }
+  }
+}

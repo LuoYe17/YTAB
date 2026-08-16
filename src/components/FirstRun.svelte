@@ -19,6 +19,7 @@
   import { plainNotice } from '../lib/notice';
   import { saveSession, sessionFromAuth, type AccountSession } from '../lib/accountSession';
   import FaceScan from './FaceScan.svelte';
+  import GhostTip from './GhostTip.svelte';
   import OkTick from './OkTick.svelte';
 
   let {
@@ -212,23 +213,26 @@
         class:selected={selected === 'author'}
         role="radio"
         aria-checked={selected === 'author'}
-        aria-describedby="tip-author"
         disabled={phase !== 'idle' || unlockOpen}
         onclick={() => pick('author')}
       >
         <span class="start">
           <span class="choice-title">作者默认</span>
           <span class="hint">
-            <span class="q" aria-hidden="true">?</span>
-            <span class="tip tip-rich" id="tip-author">
-              <span class="tip-lead">一打开就有这些作者常用网站，您不喜欢以后随时能删、能改：</span>
-              {#each AUTHOR_DEFAULT_APPS as site}
-                <span class="tip-row">
-                  <img src={bundledIconUrl(site.url) || faviconUrlFor(site.url)} alt="" width="14" height="14" />
-                  <span>{site.name}</span>
+            <GhostTip wrap>
+              <span class="q" aria-hidden="true">?</span>
+              {#snippet tip()}
+                <span class="tip-rich">
+                  <span class="tip-lead">一打开就有这些作者常用网站，您不喜欢以后随时能删、能改：</span>
+                  {#each AUTHOR_DEFAULT_APPS as site}
+                    <span class="tip-row">
+                      <img src={bundledIconUrl(site.url) || faviconUrlFor(site.url)} alt="" width="14" height="14" />
+                      <span>{site.name}</span>
+                    </span>
+                  {/each}
                 </span>
-              {/each}
-            </span>
+              {/snippet}
+            </GhostTip>
           </span>
         </span>
         <span class="tick" aria-hidden="true"></span>
@@ -240,15 +244,15 @@
         class:selected={selected === 'empty'}
         role="radio"
         aria-checked={selected === 'empty'}
-        aria-describedby="tip-empty"
         disabled={phase !== 'idle' || unlockOpen}
         onclick={() => pick('empty')}
       >
         <span class="start">
           <span class="choice-title">从头再来</span>
           <span class="hint">
-            <span class="q" aria-hidden="true">?</span>
-            <span class="tip" id="tip-empty">什么网站都没有。</span>
+            <GhostTip label="什么网站都没有。">
+              <span class="q" aria-hidden="true">?</span>
+            </GhostTip>
           </span>
         </span>
         <span class="tick" aria-hidden="true"></span>
@@ -514,35 +518,6 @@
     line-height: 1;
   }
 
-  .tip {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 8px);
-    transform: translateX(-50%) translateY(4px);
-    width: max-content;
-    max-width: min(280px, 72vw);
-    height: auto;
-    padding: 0.45rem 0.55rem;
-    border-radius: 10px;
-    background: #1c1c1e;
-    color: #f5f5f7;
-    font-size: 0.68rem;
-    font-weight: 400;
-    line-height: 1.45;
-    text-align: left;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition:
-      opacity 0.15s ease,
-      transform 0.15s ease,
-      visibility 0.15s;
-    z-index: 20;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
-  }
-
   .tip-rich {
     display: flex;
     flex-direction: column;
@@ -567,22 +542,6 @@
     border-radius: 3px;
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.12);
-  }
-
-  .tip::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    margin-left: -5px;
-    border: 5px solid transparent;
-    border-top-color: #1c1c1e;
-  }
-
-  .hint:hover .tip {
-    opacity: 1;
-    visibility: visible;
-    transform: translateX(-50%) translateY(0);
   }
 
   .tick {

@@ -31,11 +31,13 @@ describe('placeFloatingTip', () => {
     const p = placeFloatingTip({ top: 40, left: 120, right: 140, bottom: 60, width: 20 }, tip, view);
     expect(p.top).toBe(68);
     expect(p.left).toBe(50);
+    expect(p.openUp).toBe(false);
   });
 
   it('贴底则翻到上面', () => {
     const p = placeFloatingTip({ top: 250, left: 20, right: 40, bottom: 270, width: 20 }, tip, view);
     expect(p.top).toBe(202);
+    expect(p.openUp).toBe(true);
   });
 
   it('贴右边则往回夹', () => {

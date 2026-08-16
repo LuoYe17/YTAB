@@ -1,19 +1,5 @@
-/* 扫描/成功勾全局动效。Svelte 会给组件内 @keyframes 加哈希，同名动画无法跨文件共用。 */
+/* 成功勾 / 失败叉全局动效。Svelte 会给组件内 @keyframes 加哈希，同名动画无法跨文件共用。 */
 
-@keyframes fx-faceid-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes fx-faceid-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
-}
 @keyframes fx-ring-draw {
   to {
     stroke-dashoffset: 0;

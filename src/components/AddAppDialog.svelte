@@ -156,7 +156,7 @@
         {/if}
         {#if snap.phase === 'scan'}
           <span class="faceid" aria-hidden="true">
-            <FaceScan color="#fff" track="rgba(255, 255, 255, 0.22)" />
+            <FaceScan color="#fff" />
           </span>
         {:else if snap.phase === 'success'}
           <span class="ok" aria-hidden="true" out:fade={{ duration: 380 }}>

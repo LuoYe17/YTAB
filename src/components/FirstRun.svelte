@@ -179,7 +179,7 @@
 
 {#snippet scanMark()}
   <div class="faceid" aria-label="准备中" aria-live="polite">
-    <FaceScan color="#0a84ff" track="rgba(10, 132, 255, 0.18)" size={44} />
+    <FaceScan color="#0a84ff" size={44} />
   </div>
 {/snippet}
 

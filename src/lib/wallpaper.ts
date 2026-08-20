@@ -1,5 +1,6 @@
 /** 壁纸：Wallhaven 拉取、内存预取池、换图会话。一次成图；上屏与 persist 由调用方负责。 */
 
+import { fetchWithTimeout } from './async';
 import { DEFAULT_SETTINGS, type Settings, type WallpaperState } from './types';
 import { blobToDataUrl } from './dataUrl';
 import { visibleTagPresets } from './settingsFilters';
@@ -97,7 +98,7 @@ function displayMaxWidth(): number {
 }
 
 async function fetchBlob(url: string): Promise<Blob> {
-  const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+  const res = await fetchWithTimeout(url, { mode: 'cors', credentials: 'omit' });
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   return res.blob();
 }
@@ -133,7 +134,7 @@ async function searchHits(
 ): Promise<{ hits: WallhavenSearchHit[]; lastPage: number }> {
   // 密钥走请求头，避免进查询串被代理/日志记下。
   const key = (settings.wallhavenApiKey ?? '').trim();
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `https://wallhaven.cc/api/v1/search?${wallhavenSearchParams(settings, { page, seed })}`,
     { headers: key ? { 'X-API-Key': key } : undefined },
   );

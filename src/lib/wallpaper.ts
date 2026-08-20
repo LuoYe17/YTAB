@@ -1,3 +1,4 @@
+import { fetchWithTimeout, retryWithBackoff } from './async';
 import type { Settings, WallpaperState } from './types';
 
 const POOL_SIZE = 3;
@@ -72,7 +73,7 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 async function fetchBlob(url: string): Promise<Blob> {
-  const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+  const res = await fetchWithTimeout(url, { mode: 'cors', credentials: 'omit' });
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   return res.blob();
 }
@@ -113,7 +114,7 @@ async function searchHits(settings: Settings): Promise<WallhavenSearchHit[]> {
     params.set('apikey', settings.wallhavenApiKey.trim());
   }
 
-  const res = await fetch(`https://wallhaven.cc/api/v1/search?${params}`);
+  const res = await fetchWithTimeout(`https://wallhaven.cc/api/v1/search?${params}`, {}, 10_000);
   if (!res.ok) return [];
   const data = (await res.json()) as { data?: WallhavenSearchHit[] };
   return (data.data ?? []).filter((h) => {
@@ -124,12 +125,16 @@ async function searchHits(settings: Settings): Promise<WallhavenSearchHit[]> {
   });
 }
 
+/** 最多 3 次尝试，300ms → 1200ms 指数退避；零命中返回 null。 */
 async function pickHit(settings: Settings): Promise<WallhavenSearchHit | null> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const hits = await searchHits(settings);
-    if (hits.length) return hits[Math.floor(Math.random() * hits.length)] ?? hits[0]!;
-  }
-  return null;
+  return retryWithBackoff(
+    async () => {
+      const hits = await searchHits(settings);
+      if (!hits.length) throw new Error('no wallhaven hits');
+      return hits[Math.floor(Math.random() * hits.length)] ?? hits[0]!;
+    },
+    { attempts: 3, baseDelayMs: 300, factor: 4 },
+  );
 }
 
 export async function fetchRandomWallpaper(

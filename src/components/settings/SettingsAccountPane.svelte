@@ -1,35 +1,161 @@
 <script lang="ts">
-  // 账号面板内容；滚动与 fade 由 SettingsModal 的 .body 包。口令 confirm 仍在父级。
+  // 账号编排：登录 / 登出 / 口令三态 / 删云端的活都在这里，设置弹窗只留侧栏与 frame。
+  // 上传要用宿主的整份状态，走 onBackup 回调——面板本身不碰 YtabState。
   import type { Snippet } from 'svelte';
+  import { deleteBackup, fetchBackup } from '../../lib/accountApi';
+  import { signIn } from '../../lib/accountAuth';
+  import { unlockBundle } from '../../lib/accountBackup';
+  import { plainNotice } from '../../lib/notice';
+  import type { PassphraseInput } from '../../lib/passphrase';
   import {
+    clearSession,
     formatBackupAt,
+    saveSession,
+    sessionFromAuth,
     sessionUnlocked,
     type AccountSession,
   } from '../../lib/accountSession';
+  import type { YtabState } from '../../lib/types';
 
-  type OpenSheet = 'set' | 'unlock' | 'change' | 'delete';
+  type AccountSheet = 'set' | 'unlock' | 'change' | 'choose' | 'delete';
+  type PassMode = 'set' | 'unlock' | 'change';
 
+  // session 由壳层加载并补头像（侧栏头像条在账号 tab 之外也要用）；这里只做改写。
   let {
-    session,
-    accountBusy,
-    onLogin,
-    onLogout,
+    session = $bindable(null),
+    busy = $bindable(false),
+    onboardingDone,
     onOpenSheet,
+    onCloseSheet,
+    onApplyState,
+    onBackup,
     helpMark,
     githubMark,
     resetRow,
   }: {
-    session: AccountSession | null;
-    accountBusy: boolean;
-    onLogin: () => void;
-    onLogout: () => void;
-    onOpenSheet: (sheet: OpenSheet) => void;
+    session?: AccountSession | null;
+    busy?: boolean;    onboardingDone: boolean;
+    onOpenSheet: (sheet: AccountSheet) => void;
+    onCloseSheet: () => void;
+    onApplyState: (state: YtabState) => void | Promise<void>;
+    /** 用宿主当前整份、以给定口令加密上传；返回写回后的会话。 */
+    onBackup: (passphrase: string, session: AccountSession) => Promise<AccountSession>;
     helpMark: Snippet<[string]>;
     githubMark: Snippet;
     resetRow: Snippet;
   } = $props();
 
   const unlocked = $derived(sessionUnlocked(session));
+
+  function fail(err: unknown, fallback: string) {
+    plainNotice('fail', err instanceof Error ? err.message : fallback);
+  }
+
+  async function login() {
+    if (busy) return;
+    busy = true;
+    try {
+      const auth = await signIn();
+      const next = await sessionFromAuth(auth);
+      await saveSession(next);
+      session = next;
+      if (auth.hasBackup) {
+        onOpenSheet(onboardingDone ? 'choose' : 'unlock');
+      } else if (onboardingDone) {
+        onOpenSheet('set');
+      } else {
+        plainNotice('ok', '云端还没有，先选一种起始');
+      }
+    } catch (err) {
+      fail(err, '登录失败');
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function logout() {
+    await clearSession();
+    session = null;
+    onCloseSheet();
+    plainNotice('ok', '已登出');
+  }
+
+  /** 口令三张卡的统一提交口；校验已在 PassphraseSheet 做过。 */
+  export async function submitPass(mode: PassMode, input: PassphraseInput) {
+    if (busy) return;
+    if (mode === 'unlock') await runUnlock(input.oldPass);
+    else await runUpload(mode, input);
+  }
+
+  async function runUpload(mode: 'set' | 'change', input: PassphraseInput) {
+    if (!session) return;
+    busy = true;
+    try {
+      if (mode === 'change') {
+        // 解开只为验旧口令，明文随即丢弃；上传的内容以这台当前状态为准（后写盖住先写）。
+        const bundle = await fetchBackup(session.token);
+        if (bundle) await unlockBundle(bundle, input.oldPass);
+      }
+      session = await onBackup(input.newPass, session);
+      onCloseSheet();
+      plainNotice('ok', mode === 'set' ? '已上传' : '已改口令');
+    } catch (err) {
+      fail(err, mode === 'set' ? '上传失败' : '改口令失败');
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function runUnlock(pass: string) {
+    if (!session) return;
+    busy = true;
+    try {
+      const bundle = await fetchBackup(session.token);
+      if (!bundle) throw new Error('云端还没有');
+      const got = await unlockBundle(bundle, pass);
+      const next = {
+        ...session,
+        rawKey: got.rawKey,
+        salt: got.salt,
+        iter: got.iter,
+        hasBackup: true,
+        uploadedAt: session.uploadedAt,
+      };
+      await saveSession(next);
+      session = next;
+      await onApplyState(got.state);
+      onCloseSheet();
+      plainNotice('ok', '已恢复');
+    } catch (err) {
+      fail(err, '恢复失败');
+    } finally {
+      busy = false;
+    }
+  }
+
+  export async function confirmDeleteCloud() {
+    if (!session || busy) return;
+    busy = true;
+    try {
+      await deleteBackup(session.token);
+      const next = {
+        ...session,
+        rawKey: undefined,
+        salt: undefined,
+        iter: undefined,
+        uploadedAt: undefined,
+        hasBackup: false,
+      };
+      await saveSession(next);
+      session = next;
+      onCloseSheet();
+      plainNotice('ok', '云端这份已删');
+    } catch (err) {
+      fail(err, '删除失败');
+    } finally {
+      busy = false;
+    }
+  }
 </script>
 
 {#if !session}
@@ -38,9 +164,9 @@
       <span class="st-title">云端备份</span>
       {@render helpMark('登录后改完自己传到云端。卸扩展或换机再登录，用恢复口令解开。可以不登。传到云端的是加密后的整份，服务器只见密文。口令忘了只能删掉重来。')}
     </div>
-    <button type="button" class="st-action with-mark" disabled={accountBusy} onclick={onLogin}>
+    <button type="button" class="st-action with-mark" disabled={busy} onclick={login}>
       {@render githubMark()}
-      {accountBusy ? '登录中…' : '用 GitHub 登录'}
+      {busy ? '登录中…' : '用 GitHub 登录'}
     </button>
   </div>
 {:else if session}
@@ -62,19 +188,19 @@
     </div>
     <div class="acts">
       {#if unlocked}
-        <button type="button" class="st-ghost" disabled={accountBusy} onclick={() => onOpenSheet('change')}>
+        <button type="button" class="st-ghost" disabled={busy} onclick={() => onOpenSheet('change')}>
           改口令
         </button>
       {:else if session.hasBackup !== false}
-        <button type="button" class="st-action" disabled={accountBusy} onclick={() => onOpenSheet('unlock')}>
+        <button type="button" class="st-action" disabled={busy} onclick={() => onOpenSheet('unlock')}>
           解开
         </button>
       {:else}
-        <button type="button" class="st-action" disabled={accountBusy} onclick={() => onOpenSheet('set')}>
+        <button type="button" class="st-action" disabled={busy} onclick={() => onOpenSheet('set')}>
           设口令
         </button>
       {/if}
-      <button type="button" class="st-ghost" disabled={accountBusy} onclick={onLogout}>退出</button>
+      <button type="button" class="st-ghost" disabled={busy} onclick={logout}>退出</button>
     </div>
   </div>
 {/if}
@@ -85,7 +211,7 @@
         <span class="st-title">删除云端</span>
         {@render helpMark('只丢掉服务器上的密文。本机不动。')}
       </div>
-      <button type="button" class="st-danger" disabled={accountBusy} onclick={() => onOpenSheet('delete')}>
+      <button type="button" class="st-danger" disabled={busy} onclick={() => onOpenSheet('delete')}>
         删除
       </button>
     </div>

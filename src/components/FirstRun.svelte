@@ -43,7 +43,7 @@
   let selected = $state<'author' | 'empty'>('author');
   let phase = $state<'idle' | 'scan' | 'success'>('idle');
   let unlockOpen = $state(false);
-  let passA = $state('');
+  let oldPass = $state('');
   let loginBusy = $state(false);
   let pending = $state<AccountSession | null>(null);
   let passEl = $state<HTMLInputElement | null>(null);
@@ -118,14 +118,14 @@
   }
 
   async function confirmUnlock() {
-    if (!pending || !passphraseOk(passA) || phase !== 'idle' || loginBusy) return;
+    if (!pending || !passphraseOk(oldPass) || phase !== 'idle' || loginBusy) return;
     phase = 'scan';
     loginBusy = true;
     const started = Date.now();
     try {
       const bundle = await fetchBackup(pending.token);
       if (!bundle) throw new Error('云端还没有');
-      const got = await unlockBundle(bundle, passA);
+      const got = await unlockBundle(bundle, oldPass);
       await saveSession({ ...pending, rawKey: got.rawKey, salt: got.salt, iter: got.iter });
       await onRestored(got.state);
       const left = MIN_SCAN_MS - (Date.now() - started);
@@ -290,7 +290,7 @@
             type="password"
             autocomplete="current-password"
             placeholder="恢复口令"
-            bind:value={passA}
+            bind:value={oldPass}
             tabindex={unlockOpen ? 0 : -1}
             disabled={phase !== 'idle'}
           />
@@ -303,7 +303,7 @@
                 disabled={phase !== 'idle'}
                 onclick={() => {
                   unlockOpen = false;
-                  passA = '';
+                  oldPass = '';
                 }}
               >
                 取消
@@ -312,7 +312,7 @@
                 type="submit"
                 class="action"
                 tabindex={unlockOpen && phase === 'idle' ? 0 : -1}
-                disabled={phase !== 'idle' || loginBusy || !passphraseOk(passA)}
+                disabled={phase !== 'idle' || loginBusy || !passphraseOk(oldPass)}
               >
                 解开
               </button>
@@ -634,6 +634,8 @@
     color: #3a3a3c;
   }
   .pass {
+    /* 全局 passField.css 带 0.45rem 下边距；这里的浅色卡没有，钉住原样。 */
+    margin: 0;
     width: 100%;
     box-sizing: border-box;
     border: 1px solid rgba(0, 0, 0, 0.1);

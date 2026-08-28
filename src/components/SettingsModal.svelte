@@ -1,25 +1,17 @@
 <script lang="ts">
+  // 设置壳：侧栏 + 分类内容 + 内层确认 frame。账号的活都在 SettingsAccountPane，
+  // 口令卡的骨架在 PassphraseSheet；这里不出现口令字段，也不写会话。
   import { fade } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import type { Settings, SettingsTab, YtabState } from '../lib/types';
   import type { WallpaperFailFocus } from '../lib/wallpaperFail';
-  import { plainNotice } from '../lib/notice';
-  import { fetchBackup, deleteBackup } from '../lib/accountApi';
-  import { signIn } from '../lib/accountAuth';
   import { accountConfigured } from '../lib/accountConfig';
-  import { setPassphraseAndUpload, unlockBundle } from '../lib/accountBackup';
-  import { passphraseOk } from '../lib/accountCrypto';
-  import {
-    clearSession,
-    ensureAvatar,
-    loadSession,
-    saveSession,
-    sessionFromAuth,
-    type AccountSession,
-  } from '../lib/accountSession';
+  import { ensureAvatar, loadSession, type AccountSession } from '../lib/accountSession';
+  import type { PassphraseInput } from '../lib/passphrase';
   import CustomScroll from './CustomScroll.svelte';
   import DialogShell from './DialogShell.svelte';
   import HelpMark from './HelpMark.svelte';
+  import PassphraseSheet from './PassphraseSheet.svelte';
   import SettingsAccountPane from './settings/SettingsAccountPane.svelte';
   import SettingsGeneralPane from './settings/SettingsGeneralPane.svelte';
   import SettingsNav from './settings/SettingsNav.svelte';
@@ -35,8 +27,8 @@
     onClose,
     onChange,
     onboardingDone,
-    packCurrent,
     onApplyState,
+    onBackup,
     onResetAll,
   }: {
     settings: Settings;
@@ -45,27 +37,30 @@
     onClose: () => void;
     onChange: (next: Settings, invalidatePool?: boolean) => void;
     onboardingDone: boolean;
-    packCurrent: () => YtabState;
     onApplyState: (state: YtabState) => void | Promise<void>;
+    /** 账号面板要上传时拿宿主整份的唯一切口；面板看不到 YtabState。 */
+    onBackup: (passphrase: string, session: AccountSession) => Promise<AccountSession>;
     onResetAll: () => void;
   } = $props();
 
   // $state 初值读了 $props().highlight，编译器警告这只是一次快照。后面 highlight 由 $effect 同步，tab 也会被侧栏改掉，不能改成 $derived。
   /* svelte-ignore state_referenced_locally */
   let tab = $state<SettingsTab>(highlight ? 'wallpaper' : 'general');
-  let accountBusy = $state(false);
   let sheet = $state<Sheet>(null);
   let session = $state<AccountSession | null>(null);
-  let passA = $state('');
-  let passB = $state('');
-  let passOld = $state('');
+  let accountBusy = $state(false);
+  let account: {
+    submitPass(mode: 'set' | 'unlock' | 'change', input: PassphraseInput): Promise<void>;
+    confirmDeleteCloud(): Promise<void>;
+  } | null = $state(null);
 
   $effect(() => {
     if (!accountConfigured() && tab === 'account') tab = 'general';
   });
 
   $effect(() => {
-    // 这里要画头像，缺了就顺手补一次；其余读会话的地方不该因此写盘。
+    // 侧栏头像条在账号 tab 之外也要显示会话，所以加载放在壳层而不是账号面板；
+    // 这里要画头像，缺了就顺手补一次，其余读会话的地方不该因此写盘。
     void (async () => {
       const read = await loadSession();
       session = read;
@@ -89,146 +84,9 @@
     else onClose();
   }
 
+  // 内层 sheet 关掉即卸载，口令字段随 PassphraseSheet 一起清空。
   function closeSheet() {
     sheet = null;
-    passA = '';
-    passB = '';
-    passOld = '';
-  }
-
-  function fail(err: unknown, fallback: string) {
-    plainNotice('fail', err instanceof Error ? err.message : fallback);
-  }
-
-  async function login() {
-    if (accountBusy) return;
-    accountBusy = true;
-    try {
-      const auth = await signIn();
-      const next = await sessionFromAuth(auth);
-      await saveSession(next);
-      session = next;
-      if (auth.hasBackup) {
-        sheet = onboardingDone ? 'choose' : 'unlock';
-      } else if (onboardingDone) {
-        sheet = 'set';
-      } else {
-        plainNotice('ok', '云端还没有，先选一种起始');
-      }
-    } catch (err) {
-      fail(err, '登录失败');
-    } finally {
-      accountBusy = false;
-    }
-  }
-
-  async function logout() {
-    await clearSession();
-    session = null;
-    closeSheet();
-    plainNotice('ok', '已登出');
-  }
-
-  async function confirmSet() {
-    if (passA !== passB) {
-      plainNotice('fail', '两次口令不一致');
-      return;
-    }
-    if (!session) return;
-    if (!passphraseOk(passA)) {
-      plainNotice('fail', '恢复口令至少 8 位');
-      return;
-    }
-    accountBusy = true;
-    try {
-      session = await setPassphraseAndUpload(packCurrent(), passA, session);
-      closeSheet();
-      plainNotice('ok', '已上传');
-    } catch (err) {
-      fail(err, '上传失败');
-    } finally {
-      accountBusy = false;
-    }
-  }
-
-  async function confirmUnlock() {
-    if (!session) return;
-    if (!passA) {
-      plainNotice('fail', '请输入恢复口令');
-      return;
-    }
-    accountBusy = true;
-    try {
-      const bundle = await fetchBackup(session.token);
-      if (!bundle) throw new Error('云端还没有');
-      const got = await unlockBundle(bundle, passA);
-      const next = {
-        ...session,
-        rawKey: got.rawKey,
-        salt: got.salt,
-        iter: got.iter,
-        hasBackup: true,
-        uploadedAt: session.uploadedAt,
-      };
-      await saveSession(next);
-      session = next;
-      await onApplyState(got.state);
-      closeSheet();
-      plainNotice('ok', '已恢复');
-    } catch (err) {
-      fail(err, '恢复失败');
-    } finally {
-      accountBusy = false;
-    }
-  }
-
-  async function confirmChange() {
-    if (passA !== passB) {
-      plainNotice('fail', '两次口令不一致');
-      return;
-    }
-    if (!session) return;
-    if (!passphraseOk(passA)) {
-      plainNotice('fail', '恢复口令至少 8 位');
-      return;
-    }
-    accountBusy = true;
-    try {
-      // 解开只为验旧口令，明文随即丢弃；上传的内容以这台当前状态为准（后写盖住先写）。
-      const bundle = await fetchBackup(session.token);
-      if (bundle) await unlockBundle(bundle, passOld);
-      session = await setPassphraseAndUpload(packCurrent(), passA, session);
-      closeSheet();
-      plainNotice('ok', '已改口令');
-    } catch (err) {
-      fail(err, '改口令失败');
-    } finally {
-      accountBusy = false;
-    }
-  }
-
-  async function confirmDeleteCloud() {
-    if (!session) return;
-    accountBusy = true;
-    try {
-      await deleteBackup(session.token);
-      const next = {
-        ...session,
-        rawKey: undefined,
-        salt: undefined,
-        iter: undefined,
-        uploadedAt: undefined,
-        hasBackup: false,
-      };
-      await saveSession(next);
-      session = next;
-      closeSheet();
-      plainNotice('ok', '云端这份已删');
-    } catch (err) {
-      fail(err, '删除失败');
-    } finally {
-      accountBusy = false;
-    }
   }
 
   function confirmReset() {
@@ -304,11 +162,14 @@
           <div class="body" in:fade={{ duration: 160 }} out:fade={{ duration: 120 }}>
             <CustomScroll>
               <SettingsAccountPane
-                {session}
-                {accountBusy}
-                onLogin={() => login()}
-                onLogout={() => logout()}
+                bind:session
+                bind:busy={accountBusy}
+                bind:this={account}
+                {onboardingDone}
                 onOpenSheet={(s) => (sheet = s)}
+                onCloseSheet={closeSheet}
+                {onApplyState}
+                {onBackup}
                 {helpMark}
                 {githubMark}
                 {resetRow}
@@ -319,14 +180,23 @@
       </div>
     </section>
 
-    {#if sheet === 'choose'}
-      <div class="confirm" transition:fade={{ duration: 140 }}>
-        <div class="confirm-card">
+    {#if sheet === 'set' || sheet === 'unlock' || sheet === 'change'}
+      {@const mode = sheet}
+      <PassphraseSheet
+        {mode}
+        hasBackup={session?.hasBackup ?? false}
+        busy={accountBusy}
+        onCancel={closeSheet}
+        onSubmit={(input) => account?.submitPass(mode, input)}
+      />
+    {:else if sheet === 'choose'}
+      <div class="st-confirm" transition:fade={{ duration: 140 }}>
+        <div class="st-confirm-card">
           <div class="st-head">
             <span class="st-title">选一份</span>
           </div>
           <p>云端有一份，这台也有。用哪边？</p>
-          <div class="confirm-row">
+          <div class="st-confirm-row">
             <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
             <button type="button" class="st-ghost" disabled={accountBusy} onclick={() => (sheet = 'set')}>
               用这台的
@@ -337,77 +207,21 @@
           </div>
         </div>
       </div>
-    {:else if sheet === 'set'}
-      <div class="confirm" transition:fade={{ duration: 140 }}>
-        <div class="confirm-card">
-          <div class="st-head">
-            <span class="st-title">恢复口令</span>
-            {@render helpMark('用来加密云端这份。忘了就打不开，只能删掉重来。')}
-          </div>
-          <p>
-            {session?.hasBackup
-              ? '会用这台的内容盖住云端那份，旧口令随之作废。至少 8 位。'
-              : '至少 8 位。再输入一次确认。'}
-          </p>
-          <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
-          <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
-          <div class="confirm-row">
-            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="st-action" disabled={accountBusy} onclick={confirmSet}>
-              确定
-            </button>
-          </div>
-        </div>
-      </div>
-    {:else if sheet === 'unlock'}
-      <div class="confirm" transition:fade={{ duration: 140 }}>
-        <div class="confirm-card">
-          <div class="st-head">
-            <span class="st-title">解开云端</span>
-            {@render helpMark('输入当时设的恢复口令。')}
-          </div>
-          <p>解开后这台会记住，退出或卸扩展才忘。</p>
-          <input class="pass" type="password" autocomplete="current-password" placeholder="恢复口令" bind:value={passA} />
-          <div class="confirm-row">
-            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="st-action" disabled={accountBusy} onclick={confirmUnlock}>
-              解开
-            </button>
-          </div>
-        </div>
-      </div>
-    {:else if sheet === 'change'}
-      <div class="confirm" transition:fade={{ duration: 140 }}>
-        <div class="confirm-card">
-          <div class="st-head">
-            <span class="st-title">改口令</span>
-            {@render helpMark('要先对上现在的口令。')}
-          </div>
-          <p>新口令至少 8 位。</p>
-          <input class="pass" type="password" autocomplete="current-password" placeholder="现在的口令" bind:value={passOld} />
-          <input class="pass" type="password" autocomplete="new-password" placeholder="新口令，至少 8 位" bind:value={passA} />
-          <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
-          <div class="confirm-row">
-            <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="st-action" disabled={accountBusy} onclick={confirmChange}>确定</button>
-          </div>
-        </div>
-      </div>
     {:else if sheet === 'delete'}
-      <div class="confirm" transition:fade={{ duration: 140 }}>
-        <div class="confirm-card">
+      <div class="st-confirm" transition:fade={{ duration: 140 }}>
+        <div class="st-confirm-card">
           <p>删掉云端那份密文。本机网格不动。此操作不可撤销。</p>
-          <div class="confirm-row">
+          <div class="st-confirm-row">
             <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
-            <button type="button" class="st-danger" disabled={accountBusy} onclick={confirmDeleteCloud}>确定删除</button>
+            <button type="button" class="st-danger" disabled={accountBusy} onclick={() => account?.confirmDeleteCloud()}>确定删除</button>
           </div>
         </div>
       </div>
     {:else if sheet === 'reset'}
-      <div class="confirm" transition:fade={{ duration: 140 }}>
-        <div class="confirm-card">
+      <div class="st-confirm" transition:fade={{ duration: 140 }}>
+        <div class="st-confirm-card">
           <p>将清除全部 App、文件夹、设置、壁纸与一言缓存，并回到首次启动。这台登录会忘掉。云端还在。此操作不可撤销。</p>
-          <div class="confirm-row">
+          <div class="st-confirm-row">
             <button type="button" class="st-ghost" onclick={closeSheet}>取消</button>
             <button type="button" class="st-danger" onclick={confirmReset}>确定重置</button>
           </div>
@@ -468,62 +282,5 @@
   .body {
     position: absolute;
     inset: 0;
-  }
-  .pass {
-    width: 100%;
-    box-sizing: border-box;
-    margin: 0 0 0.45rem;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(0, 0, 0, 0.25);
-    color: inherit;
-    border-radius: 8px;
-    padding: 0.45rem 0.65rem;
-    font: inherit;
-    outline: none;
-  }
-  .pass:focus {
-    border-color: rgba(126, 203, 255, 0.55);
-  }
-  .confirm {
-    position: absolute;
-    inset: 0;
-    z-index: 4;
-    display: grid;
-    place-items: center;
-    background: rgba(0, 0, 0, 0.4);
-    padding: 1rem;
-  }
-  .confirm-card {
-    width: min(360px, 100%);
-    background: rgba(28, 28, 32, 0.72);
-    backdrop-filter: blur(28px) saturate(1.25);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 12px;
-    padding: 0.9rem 1rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.65rem;
-    color: #f5f5f7;
-    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
-  }
-  .confirm-card p {
-    margin: 0;
-    font-size: 0.88rem;
-    line-height: 1.5;
-  }
-  .confirm-row {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-  }
-  .confirm-row .st-action {
-    background: #fff;
-    color: #111;
-  }
-  .confirm-row .st-action:hover:not(:disabled) {
-    background: #f2f2f7;
-  }
-  .confirm-row .st-action:disabled {
-    opacity: 0.45;
   }
 </style>

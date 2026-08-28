@@ -1,6 +1,7 @@
 /* Settings 共用 chrome：只收录跨文件、规则完全相同的类。
    st- 前缀避免无作用域导入泄漏到非 settings 组件。
-   只由 SettingsModal 导入一次；有差异的覆盖留在各组件 <style>。 */
+   只由 SettingsModal 导入一次（PassphraseSheet 只在它内部渲染，共用同一份）；
+   有差异的覆盖留在各组件 <style>。 */
 
 .st-block {
   display: flex;
@@ -117,4 +118,48 @@
   100% {
     box-shadow: 0 0 0 2px rgba(126, 203, 255, 0);
   }
+}
+
+/* 内层确认 frame：盖住整块 sheet（含侧栏），口令三态由 PassphraseSheet 渲染同一份。 */
+.st-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1rem;
+}
+.st-confirm-card {
+  width: min(360px, 100%);
+  background: rgba(28, 28, 32, 0.72);
+  backdrop-filter: blur(28px) saturate(1.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 0.9rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  color: #f5f5f7;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+}
+.st-confirm-card p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.st-confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.st-confirm-row .st-action {
+  background: #fff;
+  color: #111;
+}
+.st-confirm-row .st-action:hover:not(:disabled) {
+  background: #f2f2f7;
+}
+.st-confirm-row .st-action:disabled {
+  opacity: 0.45;
 }

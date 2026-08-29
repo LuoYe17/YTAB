@@ -1,50 +1,24 @@
 /** 弹出 GitHub 登录。Client ID 空着时不要调用，界面不应画出按钮。 */
 
-import { ACCOUNT_API, accountConfigured, GITHUB_OAUTH_CLIENT_ID, GITHUB_REDIRECT } from './accountConfig';
+import type { browser } from 'wxt/browser';
+import { accountConfigured, GITHUB_OAUTH_CLIENT_ID, GITHUB_REDIRECT } from './accountConfig';
 import { authWithGithub, type AuthOk } from './accountApi';
 
 const POPUP_W = 420;
 const POPUP_H = 640;
 
-type ChromeWin = { id?: number };
-type WindowsApi = {
-  create: (
-    info: {
-      url: string;
-      type: 'popup';
-      width: number;
-      height: number;
-      left?: number;
-      top?: number;
-      focused: boolean;
-    },
-    cb: (win?: ChromeWin) => void,
-  ) => void;
-  remove: (id: number, cb?: () => void) => void;
-  onRemoved: {
-    addListener: (cb: (id: number) => void) => void;
-    removeListener: (cb: (id: number) => void) => void;
-  };
-};
-type TabsApi = {
-  onUpdated: {
-    addListener: (cb: (tabId: number, info: { url?: string }, tab: { windowId?: number; url?: string }) => void) => void;
-    removeListener: (cb: (tabId: number, info: { url?: string }, tab: { windowId?: number; url?: string }) => void) => void;
-  };
-};
+// 接口的形状全部取自 wxt/browser（@types/chrome 系，回调与 Promise 双载）；
+// 运行时仍读 globalThis.chrome：纯页面 / 测试里没有，拿到的就是空对象。
+type WindowsApi = NonNullable<(typeof browser)['windows']>;
+type TabsApi = NonNullable<(typeof browser)['tabs']>;
+type RuntimeApi = NonNullable<(typeof browser)['runtime']>;
 
-function chromeRuntime(): {
-  windows?: WindowsApi;
-  tabs?: TabsApi;
-  runtime?: { lastError?: { message?: string } };
-} {
-  return (
-    (globalThis as unknown as { chrome?: ReturnType<typeof chromeRuntime> }).chrome ?? {}
-  );
+function chromeApi(): { windows?: WindowsApi; tabs?: TabsApi; runtime?: RuntimeApi } {
+  return (globalThis as unknown as { chrome?: typeof browser }).chrome ?? {};
 }
 
 function lastErrorMessage(): string | undefined {
-  return chromeRuntime().runtime?.lastError?.message;
+  return chromeApi().runtime?.lastError?.message;
 }
 
 function randomState(): string {
@@ -74,7 +48,7 @@ function readAuthRedirect(
 
 /** 弹出 GitHub。成功后拿到我们自己的会话令牌，还不知道云端有没有份。 */
 export async function signIn(): Promise<AuthOk> {
-  if (!accountConfigured() || !GITHUB_OAUTH_CLIENT_ID || !ACCOUNT_API) {
+  if (!accountConfigured()) {
     throw new Error('账号备份还没接上');
   }
   const { code, redirectUri } = await getGithubCode();
@@ -90,7 +64,7 @@ function getGithubCode(): Promise<{ code: string; redirectUri: string }> {
   url.searchParams.set('scope', 'read:user');
   url.searchParams.set('state', state);
 
-  const ext = chromeRuntime();
+  const ext = chromeApi();
   if (!ext.windows?.create || !ext.tabs?.onUpdated) {
     return Promise.reject(new Error('这台浏览器没有登录接口'));
   }

@@ -19,7 +19,7 @@ vi.mock('wxt/utils/storage', () => ({
 import { render, screen, waitFor } from '@testing-library/svelte';
 import SettingsModal from './SettingsModal.svelte';
 import type { AccountSession } from '../lib/accountSession';
-import { DEFAULT_SETTINGS, createEmptyState } from '../lib/types';
+import { DEFAULT_SETTINGS } from '../lib/types';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -94,7 +94,7 @@ function renderSettings() {
     onClose,
     onChange: vi.fn(),
     onboardingDone: true,
-    packCurrent: () => createEmptyState(),
+    onBackup: vi.fn(async () => fakeSession({ hasBackup: true })),
     onApplyState: vi.fn(),
     onResetAll: vi.fn(),
   });

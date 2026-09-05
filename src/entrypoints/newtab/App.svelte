@@ -31,8 +31,8 @@
     setPassphraseAndUpload,
   } from '../../lib/accountBackup';
   import { backupInterest } from '../../lib/accountInterest';
-  import { passphraseOk } from '../../lib/accountCrypto';
-  import { clearSession, loadSession, needsFirstPassphrase } from '../../lib/accountSession';
+  import { newPassphraseError } from '../../lib/passphrase';
+  import { clearSession, loadSession, needsFirstPassphrase, type AccountSession } from '../../lib/accountSession';
   import {
     createEmptyState,
     type AppItem,
@@ -48,6 +48,7 @@
   import type { WallpaperFailFocus } from '../../lib/wallpaperFail';
   import { plainNotice, showNotice } from '../../lib/notice';
   import NoticeHost from '../../components/NoticeHost.svelte';
+  import '../../components/passField.css';
 
   let ready = $state(false);
   let loadFailed = $state(false);
@@ -65,8 +66,8 @@
   let settingsBtnEl = $state<HTMLButtonElement | null>(null);
   let settingsOrigin = $state({ x: 40, y: 40 });
   let needPass = $state(false);
-  let passA = $state('');
-  let passB = $state('');
+  let newPass = $state('');
+  let confirmPass = $state('');
   let passBusy = $state(false);
 
   const wallpaper = createWallpaperSurface({
@@ -108,6 +109,11 @@
 
   function packCurrent(): YtabState {
     return { ...$state.snapshot(ytab), pages: $state.snapshot(grid).pages };
+  }
+
+  /** 口令门与设置里的设口令 / 改口令共用：以这台当前整份、用给定口令加密上传。 */
+  async function backupWithPassphrase(pass: string, session: AccountSession) {
+    return setPassphraseAndUpload(packCurrent(), pass, session);
   }
 
   async function bootstrap() {
@@ -273,13 +279,10 @@
   }
 
   async function confirmFirstPass() {
-    if (passA !== passB) {
-      plainNotice('fail', '两次口令不一致');
-      return;
-    }
     if (passBusy) return;
-    if (!passphraseOk(passA)) {
-      plainNotice('fail', '恢复口令至少 8 位');
+    const err = newPassphraseError(newPass, confirmPass);
+    if (err) {
+      plainNotice('fail', err);
       return;
     }
     passBusy = true;
@@ -289,10 +292,10 @@
         needPass = false;
         return;
       }
-      await setPassphraseAndUpload(packCurrent(), passA, session);
+      await backupWithPassphrase(newPass, session);
       needPass = false;
-      passA = '';
-      passB = '';
+      newPass = '';
+      confirmPass = '';
       plainNotice('ok', '已上传');
     } catch (err) {
       plainNotice('fail', err instanceof Error ? err.message : '上传失败');
@@ -407,7 +410,7 @@
       }}
       onChange={onSettingsChange}
       onboardingDone={ytab.onboardingDone}
-      packCurrent={packCurrent}
+      onBackup={backupWithPassphrase}
       onApplyState={onImportState}
       onResetAll={onResetAll}
     />
@@ -436,8 +439,8 @@
       <div class="pass-card">
         <h2 id="pass-title">恢复口令</h2>
         <p>用来加密云端这份。至少 8 位，忘了就打不开。</p>
-        <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={passA} />
-        <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={passB} />
+        <input class="pass" type="password" autocomplete="new-password" placeholder="至少 8 位" bind:value={newPass} />
+        <input class="pass" type="password" autocomplete="new-password" placeholder="再输入一次" bind:value={confirmPass} />
         <div class="pass-row">
           <button type="button" class="pass-skip" disabled={passBusy} onclick={() => (needPass = false)}>
             稍后
@@ -482,21 +485,6 @@
     margin: 0 0 0.7rem;
     font-size: 0.82rem;
     color: rgba(255, 255, 255, 0.55);
-  }
-  .pass {
-    width: 100%;
-    box-sizing: border-box;
-    margin: 0 0 0.45rem;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(0, 0, 0, 0.25);
-    color: inherit;
-    border-radius: 8px;
-    padding: 0.45rem 0.65rem;
-    font: inherit;
-    outline: none;
-  }
-  .pass:focus {
-    border-color: rgba(126, 203, 255, 0.55);
   }
   .pass-row {
     display: flex;

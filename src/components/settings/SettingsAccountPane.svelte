@@ -218,6 +218,9 @@
   {/if}
   {@render resetRow()}
 </div>
+<p class="st-privacy">
+  隐私：服务器只存加密后的密文和你的 GitHub 用户标识，内容只有你的恢复口令能解开。口令只在这台设备上用，不上传；忘了就没有办法找回，只能删掉云端这份重新开始。删云端只删服务器那份，本机不动；重置本机只清这台，云端还在。
+</p>
 
 <style>
   .st-block.st-inline .st-action {
@@ -243,5 +246,11 @@
   }
   .st-action.with-mark :global(svg) {
     flex-shrink: 0;
+  }
+  .st-privacy {
+    margin: 0.15rem 0.2rem 0.4rem;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 0.78rem;
+    line-height: 1.55;
   }
 </style>

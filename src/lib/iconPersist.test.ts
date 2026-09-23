@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { svgDataUrl } from './appIcons';
 import { faviconUrlFor } from './defaults';
 import {
   META_ICON_PREFIX,
   collectAppIds,
   extractIconBlobs,
   hydrateIconBlobs,
+  repairIconDataUrl,
   staleIconKeys,
   stripLocalIcons,
 } from './iconPersist';
@@ -94,5 +96,41 @@ describe('icon persist split', () => {
     expect(next.pages[0]![1]?.kind === 'app' && next.pages[0]![1].icon).toBe(
       faviconUrlFor('https://example.com/b'),
     );
+  });
+});
+
+describe('repairIconDataUrl', () => {
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#4D6BFE"/></svg>';
+  const bundled = svgDataUrl(SVG);
+  /** 备份往返后的形态：把内置那串百分号文本当成字节再包一层 base64。 */
+  const mangled = `data:image/svg+xml;base64,${btoa(bundled.slice(bundled.indexOf(',') + 1))}`;
+
+  it('把 base64(百分号串) 还原回 charset=utf-8', () => {
+    expect(repairIconDataUrl(mangled)).toBe(bundled);
+  });
+
+  it('真 base64 的 SVG 不碰：改成 charset=utf-8 会让 fill 里的 # 变成片段分隔符', () => {
+    const good = `data:image/svg+xml;base64,${btoa(SVG)}`;
+    expect(repairIconDataUrl(good)).toBe(good);
+  });
+
+  it('其余形态一律原样返回', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgo=';
+    const http = 'https://example.com/a.png';
+    expect(repairIconDataUrl(png)).toBe(png);
+    expect(repairIconDataUrl(http)).toBe(http);
+    expect(repairIconDataUrl('')).toBe('');
+    expect(repairIconDataUrl(`${META_ICON_PREFIX}a`)).toBe(`${META_ICON_PREFIX}a`);
+    expect(repairIconDataUrl('data:image/svg+xml;base64,不是base64')).toBe(
+      'data:image/svg+xml;base64,不是base64',
+    );
+  });
+
+  it('hydrate 填像素时顺手修好', () => {
+    const state = { ...createEmptyState(), pages: [[app('a', `${META_ICON_PREFIX}a`)]] };
+
+    const next = hydrateIconBlobs(state, new Map([['a', mangled]]));
+
+    expect(next.pages[0]![0]?.kind === 'app' && next.pages[0]![0].icon).toBe(bundled);
   });
 });

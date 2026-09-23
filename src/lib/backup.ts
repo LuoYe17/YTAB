@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { blobToDataUrl } from './dataUrl';
-import { stripLocalIcons } from './iconPersist';
+import { repairIconDataUrl, stripLocalIcons } from './iconPersist';
 import type { YtabState } from './types';
 
 const META_NAME = 'ytab.json';
@@ -63,7 +63,9 @@ async function packIcon(
       const isBase64 = header.includes('base64');
       const ext = extFromMime(header) ?? 'bin';
       const path = `${ICONS_DIR}${id}.${ext}`;
-      zip.file(path, data, { base64: isBase64 });
+      // 非 base64 的 data URL（内置 SVG 走 charset=utf-8 + 百分号编码）要先解回真图：
+      // 把百分号串当字节存进 ZIP，回读时会被再包一层 base64，浏览器就解不出图了。
+      zip.file(path, isBase64 ? data : decodeDataPayload(data), { base64: isBase64 });
       iconMap[id] = path;
       return;
     }
@@ -78,6 +80,15 @@ async function packIcon(
     }
   } catch {
     // skip failed icons
+  }
+}
+
+/** 百分号编码的 data URL 载荷还原成原文；解不开就原样返回，宁可存得丑也不要抛。 */
+function decodeDataPayload(data: string): string {
+  try {
+    return decodeURIComponent(data);
+  } catch {
+    return data;
   }
 }
 
@@ -144,5 +155,6 @@ async function resolveIcon(zip: JSZip, icon: string): Promise<string> {
           ? 'image/webp'
           : 'image/png';
   const blob = new Blob([buf], { type: mime });
-  return await blobToDataUrl(blob);
+  // 老版本写坏过的包（ZIP 里存的是百分号文本）在这里就还原，别让坏图再进一次状态。
+  return repairIconDataUrl(await blobToDataUrl(blob));
 }

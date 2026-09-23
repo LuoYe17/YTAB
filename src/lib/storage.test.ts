@@ -210,6 +210,20 @@ describe('读回', () => {
     expect(upgraded.icon.startsWith('data:image/svg+xml')).toBe(true);
     expect(p.writes()).toContain('meta.set');
   });
+
+  it('备份往返写坏的图标读回时修好，并顺手换掉盘上的坏像素', async () => {
+    // 老版本导出把内置 SVG 写成 base64(百分号串)，浏览器解不出这种图
+    const percent = '%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E';
+    const repaired = `data:image/svg+xml;charset=utf-8,${percent}`;
+    const p = memPersist({ meta: stateOf([app('a', `${META_ICON_PREFIX}a`)]) });
+    p.kvMap.set(iconIdbKey('a'), `data:image/svg+xml;base64,${btoa(percent)}`);
+
+    const loaded = await p.load();
+    const item = loaded.pages[0]![0]!;
+    expect(item.kind === 'app' && item.icon).toBe(repaired);
+    expect(p.kvMap.get(iconIdbKey('a'))).toBe(repaired);
+    expect(p.writes()).toContain('meta.set');
+  });
 });
 
 describe('迁移', () => {

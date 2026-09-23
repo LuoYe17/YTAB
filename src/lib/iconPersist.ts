@@ -40,6 +40,33 @@ function mapApps(state: YtabState, fn: (app: AppItem) => AppItem): YtabState {
 }
 
 /**
+ * 认「被备份往返写坏」的 SVG data URL，并还原成能渲染的形态；其余原样返回。
+ *
+ * 老版本导出把 `data:image/svg+xml;charset=utf-8,` 后面的百分号文本当字节写进 ZIP，
+ * 回读时又按字节重包一层 base64 —— 于是浏览器拿到的是 `base64(百分号串)`，
+ * `<img>` 解不出图，磁贴只能退成内置图或字母。认这个形态：base64 载荷解出来是百分号串、
+ * 且解完确实是 XML。真实 base64 的 SVG（解出来直接是 `<svg`）不能碰：换成 charset=utf-8
+ * 会让 `fill="#181717"` 里的 `#` 变成片段分隔符，反而弄坏好图。
+ */
+export function repairIconDataUrl(icon: string): string {
+  const prefix = 'data:image/svg+xml;base64,';
+  if (!icon.startsWith(prefix)) return icon;
+  let inner: string;
+  try {
+    inner = atob(icon.slice(prefix.length));
+  } catch {
+    return icon;
+  }
+  if (!/%[0-9A-Fa-f]{2}/.test(inner)) return icon;
+  try {
+    if (!decodeURIComponent(inner).trimStart().startsWith('<')) return icon;
+  } catch {
+    return icon;
+  }
+  return `data:image/svg+xml;charset=utf-8,${inner}`;
+}
+
+/**
  * 把内存里的 data: 抽到 blobs；meta 只留 http / 空 / idb: 引用，壁纸像素清空。
  * 配额打挂过整包状态，所以像素绝不能进 chrome.storage。
  */
@@ -72,7 +99,7 @@ export function hydrateIconBlobs(state: YtabState, blobs: Map<string, string>): 
     if (!app.icon.startsWith(META_ICON_PREFIX)) return app;
     const id = app.icon.slice(META_ICON_PREFIX.length);
     const data = blobs.get(id);
-    return { ...app, icon: data || faviconUrlFor(app.url) };
+    return { ...app, icon: repairIconDataUrl(data || faviconUrlFor(app.url)) };
   });
 }
 

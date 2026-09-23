@@ -8,7 +8,7 @@
 import { storage } from 'wxt/utils/storage';
 import { applyBundledIcons, bundledIconDataUrls, pack } from './appIcons';
 import { createEmptyState, mergeSettings, type YtabState } from './types';
-import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, isStaleIconKey } from './iconPersist';
+import { IDB_ICON_PREFIX, collectAppIds, hydrateIconBlobs, iconIdbKey, isStaleIconKey, repairIconDataUrl } from './iconPersist';
 
 const META_KEY = 'local:ytab:v1' as const;
 /** Legacy key — read once to migrate, then clear. */
@@ -184,11 +184,13 @@ export function createPersist({ meta, kv }: { meta: MetaStore; kv: KvStore }): P
     // chrome.storage 里若还嵌着 data: 图标，必须走 save 写入链，先落 IDB 再发 meta。
     const needsIconMigrate = pack(state).blobs.size > 0;
     const needsBundledUpgrade = loaded !== afterHydrate;
+    // 备份往返写坏的像素要在盘上换掉；不然每次启动都得在内存里再修一遍。
+    const needsIconRepair = [...iconBlobs.values()].some((icon) => repairIconDataUrl(icon) !== icon);
     // 像素读不出来时 hydrate 已经退成 favicon；这时候落盘会把 idb: 引用永久抹掉，
     // 而像素其实还在盘上。宁可这次不写，等下次读得出来再说。
     if (
       pixelsReadable &&
-      (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade)
+      (needsWallpaperMigrate || needsMetaStrip || needsIconMigrate || needsBundledUpgrade || needsIconRepair)
     ) {
       await save(loaded);
     }

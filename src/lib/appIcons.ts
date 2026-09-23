@@ -47,6 +47,8 @@ const BUNDLED: Record<string, string> = {
   'chatgpt.com': svgDataUrl(chatgptSvg),
   'claude.ai': svgDataUrl(claudeSvg),
   'chat.deepseek.com': svgDataUrl(deepseekSvg),
+  // www 前缀由查表时归一化，只用登记裸域名
+  'deepseek.com': svgDataUrl(deepseekSvg),
   'mail.proton.me': svgDataUrl(protonSvg),
   'mail.163.com': svgDataUrl(mail163Svg),
   'linux.do': svgDataUrl(linuxDoSvg),

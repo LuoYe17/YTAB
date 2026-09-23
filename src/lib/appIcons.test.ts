@@ -42,6 +42,9 @@ describe('bundled App icons', () => {
     expect(bundledIconUrl('https://linux.do')).toBeTruthy();
     expect(bundledIconUrl('https://mail.163.com')).toBeTruthy();
     expect(bundledIconUrl('https://chat.deepseek.com')).toBeTruthy();
+    // 官网（含 www）跟控制台共用同一张鲸鱼：抓站点只能拿到 205KB 的 ico，内置的更干净
+    expect(bundledIconUrl('https://deepseek.com')).toMatch(/^data:image\/svg\+xml/);
+    expect(bundledIconUrl('https://www.deepseek.com/')).toMatch(/^data:image\/svg\+xml/);
     expect(bundledIconUrl('https://example.com')).toBe('');
   });
 
